@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flipkart Data Arrange</title>
+    <link rel="icon" type="image/png" href="/static/images/icon.png">
+    <!-- Google Fonts for premium typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom stylesheet -->
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="background-decor">
+        <div class="glow-orb orb-1"></div>
+        <div class="glow-orb orb-2"></div>
+    </div>
+
+    <div class="app-container">
+        <header style="text-align: left; padding-left: 10px; margin-bottom: 2rem;">
+            <div class="logo-area" style="justify-content: flex-start; align-items: center; display: flex; gap: 15px;">
+                <img src="/static/images/icon.png" alt="Logo" style="width: 50px; height: 50px; object-fit: contain;">
+                <h1 style="font-weight: 800; font-size: 2.2rem; color: #0f172a; margin: 0; letter-spacing: -0.5px;">FLIPKART DATA <span style="background: linear-gradient(to right, #6366f1, #0ea5e9); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">ARRANGE</span></h1>
+            </div>
+            <p class="subtitle" style="text-align: left; margin-left: 65px; margin-top: 5px; font-size: 1rem; color: #475569; font-weight: 400;">Convert & process files client-side with full privacy</p>
+        </header>
+
+        <!-- Tab Bar Navigation -->
+        <nav class="tabs-navigation">
+            <button class="tab-btn active" id="tabMergeBtn" data-target="mergeSection">
+                <i class="fa-solid fa-code-merge"></i> Merge & Clean Orders
+            </button>
+            <button class="tab-btn" id="tabRenameBtn" data-target="renameSection">
+                <i class="fa-solid fa-signature"></i> Rename Excel Files
+            </button>
+            <button class="tab-btn" id="tabSplitBtn" data-target="splitSection">
+                <i class="fa-solid fa-scissors"></i> Separate File
+            </button>
+            <button class="tab-btn" id="tabFolderBtn" data-target="folderSection">
+                <i class="fa-solid fa-folder-plus"></i> Create Folder
+            </button>
+            <button class="tab-btn" id="tabInvoiceBtn" data-target="invoiceSection">
+                <i class="fa-solid fa-file-invoice"></i> Invoice Arrange
+            </button>
+            <button class="tab-btn" id="tabPartyBtn" data-target="partySection">
+                <i class="fa-solid fa-database"></i> Party Data
+            </button>
+            <button class="tab-btn" id="tabFlipkartErrorBtn" data-target="flipkartErrorSection">
+                <i class="fa-solid fa-triangle-exclamation"></i> FLIPKART ERROR
+            </button>
+        </nav>
+
+        <main>
+            <!-- Global Progress Bar (visible during backend operations, page is NOT blurred) -->
+            <div class="progress-container-global" id="progressContainerGlobal" style="display: none;">
+                <div class="progress-status-info">
+                    <span id="progressTextGlobal">Processing sheets...</span>
+                    <span class="progress-percentage-num" id="progressPercentNum">0%</span>
+                </div>
+                <div class="progress-bar-track">
+                    <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+                </div>
+            </div>
+            <!-- ========================================== -->
+            <!-- TAB 1: MERGE & CLEAN ORDERS                -->
+            <!-- ========================================== -->
+            <section id="mergeSection" class="tab-content active">
+                <!-- Upload Panel -->
+                <div class="card upload-card">
+                    <div class="card-header">
+                        <div class="header-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                        <h2>Upload Excel/CSV Files to Merge</h2>
+                    </div>
+                    
+                    <div class="upload-dropzone" id="dropzone">
+                        <input type="file" id="fileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                        <div class="dropzone-content">
+                            <i class="fa-solid fa-file-circle-plus upload-icon"></i>
+                            <h3>Drag & drop order files here</h3>
+                            <p>or <span class="browse-btn">Browse Files</span></p>
+                            <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
+                        </div>
+                    </div>
+
+                    <!-- Selected Files List -->
+                    <div class="selected-files-container" id="filesListContainer" style="display: none;">
+                        <h3>Selected Files (<span id="fileCount">0</span>)</h3>
+                        <ul class="files-list" id="filesList"></ul>
+                        <div class="action-bar">
+                            <button class="btn btn-danger" id="clearAllBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                            <button class="btn btn-primary" id="processBtn"><i class="fa-solid fa-wand-magic-sparkles"></i> Process & Merge</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Dashboard -->
+                <div class="card result-card" id="resultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>Processing Complete!</h2>
+                            <p id="successMessage">Successfully merged 0 files with 0 total rows.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <a href="/api/download" class="btn btn-download" id="downloadBtn">
+                            <i class="fa-solid fa-file-arrow-down"></i> Download Merged Excel File
+                        </a>
+                        <span class="pincode-note"><i class="fa-solid fa-info-circle"></i> Columns <b>order_item_id</b> (18-digit IDs to Text), <b>sku</b> & <b>product_title</b> (quotes/prefixes removed) are cleaned.</span>
+                    </div>
+
+                    <div class="preview-section">
+                        <h3>Data Preview (First 10 rows)</h3>
+                        <div class="table-wrapper">
+                            <table id="previewTable">
+                                <thead>
+                                    <tr id="tableHeaders"></tr>
+                                </thead>
+                                <tbody id="tableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 2: RENAME EXCEL FILES (UNIFIED UPLOAD) -->
+            <!-- ========================================== -->
+            <section id="renameSection" class="tab-content">
+                <div class="rename-grid">
+                    <!-- Left Side: Config & Status -->
+                    <div class="rename-config-col">
+                        <!-- Options Card -->
+                        <div class="card options-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-gears"></i></div>
+                                <h2>1. Select Renaming Logic</h2>
+                            </div>
+                            
+                            <div class="radio-group">
+                                <label class="radio-container">
+                                    <input type="radio" name="renameOption" value="yes">
+                                    <span class="radio-checkmark"></span>
+                                    <div class="radio-label-text">
+                                        <span class="radio-title">Option A (Yes) - P2 Cell</span>
+                                        <span class="radio-desc">Reads cell P2 from files and matches against rules in ARRANGE mapping to rename the file.</span>
+                                    </div>
+                                </label>
+                                
+                                <label class="radio-container">
+                                    <input type="radio" name="renameOption" value="no" checked>
+                                    <span class="radio-checkmark"></span>
+                                    <div class="radio-label-text">
+                                        <span class="radio-title">Option B (No) - Column G</span>
+                                        <span class="radio-desc">Scans Column G for non-CGJ1 cells, splits and extracts right-most 3 characters to rename the file.</span>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Status Card -->
+                        <div class="card status-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-network-wired"></i></div>
+                                <h2>Active Brand Mapping</h2>
+                            </div>
+                            <div class="status-indicator-box">
+                                <div class="status-indicator-light" id="statusIndicatorLight"></div>
+                                <div class="status-indicator-details">
+                                    <h3 id="mappingStatusTitle">No Active Mapping</h3>
+                                    <p id="mappingStatusDesc">Drop a mapping file (e.g., arrange_mapping.xlsx) in the upload zone to load brand rules.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Side: Single Upload Zone -->
+                    <div class="rename-files-col">
+                        <div class="card upload-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-folder-open"></i></div>
+                                <h2>2. Upload Files to Rename & Map</h2>
+                            </div>
+                            <p class="card-desc">Drag and drop your files here. If using <b>Option A</b>, you can drop your <b>ARRANGE mapping sheet</b> in this same zone!</p>
+                            
+                            <div class="upload-dropzone" id="renameDropzone">
+                                <input type="file" id="renameFileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                                <div class="dropzone-content">
+                                    <i class="fa-solid fa-file-signature upload-icon"></i>
+                                    <h3>Drag & drop your sheets here</h3>
+                                    <p>or <span class="browse-btn">Browse Files</span></p>
+                                    <span class="file-types">Supports .xlsx, .xls, .csv</span>
+                                </div>
+                            </div>
+
+                            <!-- Selected Renamer Files List (with Auto-detected Tags) -->
+                            <div class="selected-files-container" id="renameFilesListContainer" style="display: none;">
+                                <h3>Selected Files (<span id="renameFileCount">0</span>)</h3>
+                                <ul class="files-list" id="renameFilesList"></ul>
+                                <div class="action-bar">
+                                    <button class="btn btn-danger" id="renameClearAllBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                                    <button class="btn btn-primary" id="renameProcessBtn"><i class="fa-solid fa-signature"></i> Process & Rename</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Renamer Result Card -->
+                <div class="card result-card" id="renameResultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>Files Renamed Successfully!</h2>
+                            <p id="renameSuccessMessage">Processed 0 files.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <button class="btn btn-download" id="renameDownloadBtn">
+                            <i class="fa-solid fa-file-zipper"></i> Download Renamed Files
+                        </button>
+                        <span class="pincode-note" id="renameInfoNote"><i class="fa-solid fa-circle-info"></i> Files have been renamed. Multiple files are packaged in a ZIP archive.</span>
+                    </div>
+
+                    <div class="preview-section">
+                        <h3>Renaming Operations Log</h3>
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Original Filename</th>
+                                        <th class="col-highlight">Renamed Filename</th>
+                                        <th>Extracted Rename Code</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="renameLogBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 3: SEPARATE FILE (SPLIT FILE)          -->
+            <!-- ========================================== -->
+            <section id="splitSection" class="tab-content">
+                <div class="rename-layout-grid">
+                    <!-- Left Side: Config & Options -->
+                    <div class="rename-config-col">
+                        <!-- Options Card -->
+                        <div class="card options-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-gears"></i></div>
+                                <h2>1. Select Split Variant</h2>
+                            </div>
+                            
+                            <div class="radio-group">
+                                <label class="radio-container">
+                                    <input type="radio" name="splitOption" value="1" checked>
+                                    <span class="radio-checkmark"></span>
+                                    <div class="radio-label-text">
+                                        <span class="radio-title">Option 1: SIMPLE</span>
+                                        <span class="radio-desc">Split by Column D (FLIPKART). (Header rows: 2)</span>
+                                    </div>
+                                </label>
+                                
+                                <label class="radio-container">
+                                    <input type="radio" name="splitOption" value="2">
+                                    <span class="radio-checkmark"></span>
+                                    <div class="radio-label-text">
+                                        <span class="radio-title">Option 2: DETAILS</span>
+                                        <span class="radio-desc">Split by Column D (FLIPKART Warehouse / Seller Code). (Header rows: 2)</span>
+                                    </div>
+                                </label>
+
+                                <label class="radio-container">
+                                    <input type="radio" name="splitOption" value="3">
+                                    <span class="radio-checkmark"></span>
+                                    <div class="radio-label-text">
+                                        <span class="radio-title">Option 3: SUMMARY</span>
+                                        <span class="radio-desc">Split by Column G (FLIPKART Warehouse / Code). (Header rows: 2)</span>
+                                    </div>
+                                </label>
+
+                                <label class="radio-container">
+                                    <input type="radio" name="splitOption" value="4">
+                                    <span class="radio-checkmark"></span>
+                                    <div class="radio-label-text">
+                                        <span class="radio-title">Option 4: TAX SPLIT</span>
+                                        <span class="radio-desc">Split by Column A (GSTIN / Tax details). (Header rows: 1)</span>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Side: Single File Dropzone -->
+                    <div class="rename-files-col">
+                        <div class="card upload-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-file-excel"></i></div>
+                                <h2>2. Upload Summary/Details File</h2>
+                            </div>
+                            <p class="card-desc">Drag and drop the single Excel/CSV file that you want to split by warehouse/brand/GSTIN.</p>
+                            
+                            <div class="upload-dropzone" id="splitDropzone">
+                                <input type="file" id="splitFileInput" accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                                <div class="dropzone-content">
+                                    <i class="fa-solid fa-scissors upload-icon" style="transform: rotate(-90deg); margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
+                                    <h3>Drag & drop your summary file here</h3>
+                                    <p>or <span class="browse-btn">Browse File</span></p>
+                                    <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
+                                </div>
+                            </div>
+
+                            <!-- Selected File Info -->
+                            <div class="selected-files-container" id="splitFileListContainer" style="display: none;">
+                                <h3>Selected File</h3>
+                                <ul class="files-list" id="splitFileList"></ul>
+                                <div class="action-bar">
+                                    <button class="btn btn-danger" id="splitClearBtn"><i class="fa-solid fa-trash-can"></i> Clear</button>
+                                    <button class="btn btn-primary" id="splitProcessBtn"><i class="fa-solid fa-scissors"></i> Process & Split File</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Dashboard -->
+                <div class="card result-card" id="splitResultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>File Successfully Split!</h2>
+                            <p id="splitSuccessMessage">Generated 0 separate files.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <button class="btn btn-download" id="splitDownloadBtn">
+                            <i class="fa-solid fa-file-zipper"></i> Download Split Files (ZIP)
+                        </button>
+                        <span class="pincode-note"><i class="fa-solid fa-circle-info"></i> All split sheets are exported as standard Excel (.xlsx) files inside a ZIP archive.</span>
+                    </div>
+
+                    <div class="preview-section">
+                        <h3>Generated Files Log</h3>
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>File Name</th>
+                                        <th class="col-highlight">Unique Key / Warehouse</th>
+                                        <th>Action ID</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="splitLogBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 4: CREATE FOLDER (GROUP & ZIP)         -->
+            <!-- ========================================== -->
+            <section id="folderSection" class="tab-content">
+                <div class="rename-layout-grid">
+                    <!-- Left Side: Instructions -->
+                    <div class="rename-config-col">
+                        <div class="card options-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-circle-info"></i></div>
+                                <h2>How to use Create Folder</h2>
+                            </div>
+                            <div class="instructions-box" style="padding: 16px; color: var(--text-secondary); line-height: 1.6;">
+                                <p style="margin-bottom: 12px; font-weight: 500; color: var(--text-primary);">This tool replicates the VBA folder grouping logic:</p>
+                                <ol style="padding-left: 20px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px;">
+                                    <li>Upload your **Flipkart Merged Orders** file (must contain <code>Flipkart_Merged_Orders</code> in the filename).</li>
+                                    <li>Upload your renamed sheets starting with prefixes (e.g. <code>101-TaxReport...</code>, <code>509-Invoice...</code>).</li>
+                                    <li>Click **Group & ZIP Folders**.</li>
+                                    <li>The system creates folders for each prefix, copies the merged file inside each, moves the prefix file there, and packages everything in a sorted ZIP file named <code>[firstPrefix]-[lastPrefix].zip</code>!</li>
+                                </ol>
+                                <div style="background: rgba(255, 255, 255, 0.02); padding: 12px; border: 1px dashed var(--border-color); border-radius: 8px; font-size: 13px;">
+                                    <i class="fa-solid fa-triangle-exclamation" style="color: #f59e0b; margin-right: 4px;"></i>
+                                    <b>Note:</b> Exactly <b>one</b> file must contain the word <code>FLIPKART_MERGED_ORDERS</code> in its name.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Side: Multi File Dropzone -->
+                    <div class="rename-files-col">
+                        <div class="card upload-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-folder-open"></i></div>
+                                <h2>Upload Files to Group</h2>
+                            </div>
+                            <p class="card-desc">Drag & drop your files (including Merged file & prefix renamed files) together.</p>
+                            
+                            <div class="upload-dropzone" id="folderDropzone">
+                                <input type="file" id="folderFileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                                <div class="dropzone-content">
+                                    <i class="fa-solid fa-folder-plus upload-icon" style="margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
+                                    <h3>Drag & drop your files here</h3>
+                                    <p>or <span class="browse-btn">Browse Files</span></p>
+                                    <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
+                                </div>
+                            </div>
+
+                            <!-- Selected Files Info -->
+                            <div class="selected-files-container" id="folderFileListContainer" style="display: none;">
+                                <h3>Selected Files (<span id="folderFileCount">0</span>)</h3>
+                                <ul class="files-list" id="folderFileList"></ul>
+                                <div class="action-bar">
+                                    <button class="btn btn-danger" id="folderClearBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                                    <button class="btn btn-primary" id="folderProcessBtn"><i class="fa-solid fa-folder-closed"></i> Group & ZIP Folders</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Dashboard -->
+                <div class="card result-card" id="folderResultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>ZIP Package Created!</h2>
+                            <p id="folderSuccessMessage">Created 0 prefix folders successfully.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <button class="btn btn-download" id="folderDownloadBtn">
+                            <i class="fa-solid fa-file-zipper"></i> Download ZIP Package
+                        </button>
+                        <span class="pincode-note" id="folderInfoNote"><i class="fa-solid fa-circle-info"></i> Your ZIP package is ready to download.</span>
+                    </div>
+
+                    <div class="preview-section">
+                        <h3>Grouping Operations Log</h3>
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Prefix Folder</th>
+                                        <th class="col-highlight">Merged File (Copied)</th>
+                                        <th>Renamed Files (Moved)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="folderLogBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 5: INVOICE ARRANGE                     -->
+            <!-- ========================================== -->
+            <section id="invoiceSection" class="tab-content">
+                <div class="rename-layout-grid">
+                    <!-- Left Side: Instructions -->
+                    <div class="rename-config-col">
+                        <div class="card options-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-circle-info"></i></div>
+                                <h2>Invoice Arrange Process</h2>
+                            </div>
+                            <div class="instructions-box" style="padding: 16px; color: var(--text-secondary); line-height: 1.6;">
+                                <p style="margin-bottom: 12px; font-weight: 500; color: var(--text-primary);">Required Uploads (Exactly 3 files):</p>
+                                <ul style="padding-left: 20px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px;">
+                                    <li><b>OD File</b>: Contains <code>FLIPKART_MERGED_ORDERS</code> in the filename.</li>
+                                    <li><b>DT File</b>: Contains <code>TaxReportData</code> in the filename.</li>
+                                    <li><b>Details File</b>: Contains <code>-FLIPKART</code> and prefix (e.g. <code>101-Bharvita-FLIPKART...</code>).</li>
+                                </ul>
+                                <p style="margin-bottom: 12px; font-weight: 500; color: var(--text-primary);">Execution Steps:</p>
+                                <ol style="padding-left: 20px; margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px; font-size: 13px;">
+                                    <li>Matches Details file's Invoice No (Column B) in DT (Column G) and **deletes matched rows**.</li>
+                                    <li>Calculates suffix range (e.g. <code>1-9</code>) and saves remaining DT to a new file (e.g. <code>101-(2-9)-DT.xlsx</code>).</li>
+                                    <li>Highlights matching rows in OD (Column A) using DT's suborders (Column E) and exports them to a new file (e.g. <code>101-(FK27S101-2-9)-OD.xlsx</code>).</li>
+                                    <li>Performs VBA clean macro to export **GST NOT APPLICABLE.xlsx** (if Col G is not empty and Col AP is empty) and **2 MORE INVOICE.xlsx** (if duplicate invoices exist).</li>
+                                </ol>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Side: Multi File Dropzone -->
+                    <div class="rename-files-col">
+                        <div class="card upload-card">
+                            <div class="card-header">
+                                <div class="header-icon"><i class="fa-solid fa-file-invoice"></i></div>
+                                <h2>Upload 3 Files to Arrange</h2>
+                            </div>
+                            <p class="card-desc">Drag & drop your OD, DT, and Details files together into the dropzone below.</p>
+                            
+                            <div class="upload-dropzone" id="invoiceDropzone">
+                                <input type="file" id="invoiceFileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                                <div class="dropzone-content">
+                                    <i class="fa-solid fa-file-shield upload-icon" style="margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
+                                    <h3>Drag & drop your 3 files here</h3>
+                                    <p>or <span class="browse-btn">Browse Files</span></p>
+                                    <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
+                                </div>
+                            </div>
+
+                            <!-- Selected Files Info -->
+                            <div class="selected-files-container" id="invoiceFileListContainer" style="display: none;">
+                                <h3>Selected Files (<span id="invoiceFileCount">0</span>/3)</h3>
+                                <ul class="files-list" id="invoiceFileList"></ul>
+                                <div class="action-bar">
+                                    <button class="btn btn-danger" id="invoiceClearBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                                    <button class="btn btn-primary" id="invoiceProcessBtn"><i class="fa-solid fa-play"></i> Process Invoice Arrange</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Dashboard -->
+                <div class="card result-card" id="invoiceResultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>Process Completed Successfully!</h2>
+                            <p id="invoiceSuccessMessage">Processed all 3 files and packaged output sheets.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <button class="btn btn-download" id="invoiceDownloadBtn">
+                            <i class="fa-solid fa-file-zipper"></i> Download Arranged Sheets (ZIP)
+                        </button>
+                        <span class="pincode-note" id="invoiceInfoNote"><i class="fa-solid fa-circle-info"></i> Your ZIP package is ready to download.</span>
+                    </div>
+
+                    <div class="preview-section">
+                        <h3>Operations Summary</h3>
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Metric / Operation</th>
+                                        <th class="col-highlight">Value / Output Filename</th>
+                                        <th>Status / Message</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="invoiceLogBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 6: PARTY DATA (GOOGLE SHEET SYNC)       -->
+            <!-- ========================================== -->
+            <section id="partySection" class="tab-content">
+                <!-- Parties Table Card -->
+                <div class="card" id="partiesCard" style="margin-top: 0;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div class="header-icon"><i class="fa-solid fa-users-gear"></i></div>
+                            <h2>Flipkart Party Names</h2>
+                        </div>
+                        <button class="btn btn-primary" id="addPartyBtn" style="padding: 8px 16px;"><i class="fa-solid fa-plus"></i> Add New Party</button>
+                    </div>
+                    
+                    <div class="card-body" style="padding: 20px;">
+                        <div class="table-wrapper">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>CODE</th>
+                                        <th class="col-highlight">PARTY CODE</th>
+                                        <th style="width: 150px; text-align: center;">ACTIONS</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="partiesTableBody">
+                                    <tr>
+                                        <td colspan="3" style="text-align: center; color: var(--text-secondary);">Loading parties...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Add/Edit Party Modal -->
+                <div class="loading-overlay" id="partyModal" style="display: none; z-index: 1000;">
+                    <div class="card" style="width: 90%; max-width: 450px; background: var(--bg-card); border: 1px solid var(--border-color); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.3); padding: 25px;">
+                        <h3 id="partyModalTitle" style="margin-bottom: 15px;">Add New Party</h3>
+                        <input type="hidden" id="partyRowIndex">
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 5px;">CODE (e.g. 101)</label>
+                            <input type="text" id="partyCodeInput" placeholder="Enter numeric code" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                        </div>
+                        <div style="margin-bottom: 20px;">
+                            <label style="display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 5px;">PARTY CODE (e.g. 101-BHARVITA)</label>
+                            <input type="text" id="partyNameInput" placeholder="Enter party code/name" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                        </div>
+                        <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                            <button class="btn btn-danger" id="closePartyModalBtn" style="padding: 8px 16px;">Cancel</button>
+                            <button class="btn btn-primary" id="savePartyBtn" style="padding: 8px 16px;">Save Party</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 7: FLIPKART ERROR                      -->
+            <!-- ========================================== -->
+            <section id="flipkartErrorSection" class="tab-content">
+                <div class="card" style="margin-top: 0;">
+                    <div class="card-header">
+                        <div class="header-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <h2>Flipkart Error Logic</h2>
+                    </div>
+                    <div class="card-body" style="padding: 20px;">
+                        <!-- Date Filter Selection -->
+                        <div class="date-filter-container" style="display: flex; gap: 15px; margin-bottom: 20px;">
+                            <div style="flex: 1;">
+                                <label style="display: block; font-weight: 500; margin-bottom: 5px;">From Date</label>
+                                <input type="date" id="errorFromDate" class="date-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                            </div>
+                            <div style="flex: 1;">
+                                <label style="display: block; font-weight: 500; margin-bottom: 5px;">To Date</label>
+                                <input type="date" id="errorToDate" class="date-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                            </div>
+                        </div>
+
+                        <!-- File Upload Dropzone -->
+                        <div class="upload-dropzone" id="errorDropzone">
+                            <input type="file" id="errorFileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                            <div class="dropzone-content">
+                                <i class="fa-solid fa-triangle-exclamation upload-icon" style="margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
+                                <h3>Upload Details File and Data File</h3>
+                                <p>or <span class="browse-btn">Browse Files</span></p>
+                                <span class="file-types">Exactly 2 files required</span>
+                            </div>
+                        </div>
+
+                        <!-- Selected Files Info -->
+                        <div class="selected-files-container" id="errorFileListContainer" style="display: none;">
+                            <h3>Selected Files (<span id="errorFileCount">0</span>/2)</h3>
+                            <ul class="files-list" id="errorFileList"></ul>
+                            <div class="action-bar">
+                                <button class="btn btn-danger" id="errorClearBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                                <button class="btn btn-primary" id="errorProcessBtn"><i class="fa-solid fa-play"></i> Process Flipkart Error</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Dashboard -->
+                <div class="card result-card" id="errorResultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>Process Completed Successfully!</h2>
+                            <p>Flipkart Error logic applied and files packaged.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <button class="btn btn-download" id="errorDownloadBtn">
+                            <i class="fa-solid fa-file-zipper"></i> Download ZIP
+                        </button>
+                    </div>
+                </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Loading State -->
+        <div class="loading-overlay" id="loadingOverlay" style="display: none;">
+            <div class="spinner-container">
+                <div class="spinner"></div>
+                <p id="loadingText">Processing sheets...</p>
+            </div>
+        </div>
+
+        <footer>
+            <p>Flipkart Order Excel Toolset &copy; 2026. Designed for Flipkart Sellers.</p>
+        </footer>
+    </div>
+
+    <!-- Custom JavaScript -->
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
