@@ -27,18 +27,25 @@ def detect_file_type(file_bytes, filename):
 
 # Check if file bytes represent an HTML spreadsheet
 def is_html_bytes(file_bytes):
-    try:
-        sample = file_bytes[:150].decode('utf-8', errors='ignore').strip().lower()
-        # Common HTML tags for Excel exported HTML sheets
-        if (sample.startswith('<html') or 
-            sample.startswith('<!doc') or 
-            sample.startswith('<table') or 
-            sample.startswith('<tr') or
-            sample.startswith('<head') or
-            sample.startswith('<xml')):
-            return True
-    except Exception:
-        pass
+    encodings = ['utf-8', 'utf-16', 'latin-1', 'cp1252']
+    for enc in encodings:
+        try:
+            sample = file_bytes[:1000].decode(enc, errors='ignore').strip().lower()
+            # Strip potential BOM characters
+            sample = sample.lstrip('\ufeff\xff\xfe')
+            # Common HTML tags or spreadsheet namespaces
+            if (sample.startswith('<html') or 
+                sample.startswith('<!doc') or 
+                sample.startswith('<table') or 
+                sample.startswith('<tr') or
+                sample.startswith('<head') or
+                sample.startswith('<xml') or
+                '<table' in sample or
+                '<html' in sample or
+                'xmlns:x="urn:schemas-microsoft-com:office:excel"' in sample):
+                return True
+        except Exception:
+            continue
     return False
 
 # Parse HTML Excel sheet using pandas read_html
@@ -97,8 +104,12 @@ def read_csv_robustly(file_bytes, header='infer'):
 
 # Excel COM-based repair/conversion tool (utilizes local Excel to repair malformed sheets)
 def convert_xls_to_xlsx_via_excel(file_bytes, filename):
-    import pythoncom
-    import win32com.client
+    try:
+        import pythoncom
+        import win32com.client
+    except (ImportError, ModuleNotFoundError) as e:
+        print(f"[REPAIR FAIL] Excel COM conversion is not available on this platform: {e}", flush=True)
+        return None
     
     os.makedirs('temp', exist_ok=True)
     temp_xls = os.path.join('temp', 'temp_input.xls')
