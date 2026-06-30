@@ -190,7 +190,6 @@ def read_excel_by_detecting_sheet(file_bytes, engine, header):
     print(f"[DEBUG Excel] Parsing sheet: '{sheet_name}' from workbook sheets: {xls.sheet_names}", flush=True)
     return xls.parse(sheet_name, header=header, dtype=str)
 
-# Unified reader function that handles XLSX, XLS, HTML-spreadsheets, and CSV/TSV
 def load_any_sheet_to_dataframe(file_bytes, filename, header=None):
     filetype = detect_file_type(file_bytes, filename)
     
@@ -203,7 +202,14 @@ def load_any_sheet_to_dataframe(file_bytes, filename, header=None):
         try:
             return read_excel_by_detecting_sheet(file_bytes, engine='openpyxl', header=header)
         except Exception as e:
-            print(f"XLSX load fail on {filename}: {e}. Trying CSV fallback...", flush=True)
+            print(f"XLSX load fail on {filename}: {e}.", flush=True)
+            xlsx_bytes = convert_xls_to_xlsx_via_excel(file_bytes, filename)
+            if xlsx_bytes:
+                try:
+                    return read_excel_by_detecting_sheet(xlsx_bytes, engine='openpyxl', header=header)
+                except Exception as ex:
+                    raise ex
+            raise e
             
     if filetype == 'xls':
         # Try standard xlrd engine first
@@ -217,9 +223,8 @@ def load_any_sheet_to_dataframe(file_bytes, filename, header=None):
                     print(f"COM Repair succeeded for {filename}. Loading XLSX...", flush=True)
                     return read_excel_by_detecting_sheet(xlsx_bytes, engine='openpyxl', header=header)
                 except Exception as ex:
-                    print(f"Failed to load repaired XLSX for {filename}: {ex}", flush=True)
-            else:
-                print(f"Excel COM repair returned None for {filename}", flush=True)
+                    raise ex
+            raise e
             
     if filetype == 'html':
         try:
@@ -230,7 +235,8 @@ def load_any_sheet_to_dataframe(file_bytes, filename, header=None):
                 df = df[1:].reset_index(drop=True)
             return df
         except Exception as e:
-            print(f"HTML load fail on {filename}: {e}. Trying CSV fallback...", flush=True)
+            print(f"HTML load fail on {filename}: {e}.", flush=True)
+            raise e
             
     # Fallback to robust CSV
     try:
@@ -244,7 +250,7 @@ def load_any_sheet_to_dataframe(file_bytes, filename, header=None):
             try:
                 return read_excel_by_detecting_sheet(xlsx_bytes, engine='openpyxl', header=header)
             except Exception as ex:
-                print(f"Last resort load failed: {ex}", flush=True)
+                raise ex
         raise e
 
 # Helper function to find a column by name or index
