@@ -164,9 +164,11 @@ def convert_xls_to_xlsx_via_excel(file_bytes, filename):
                 pass
         return None
 
-# Detect sheet name matching 'order' or 'orders' case-insensitively, falling back to the first sheet
 def read_excel_by_detecting_sheet(file_bytes, engine, header):
-    xls = pd.ExcelFile(io.BytesIO(file_bytes), engine=engine)
+    if engine == 'xlrd':
+        xls = pd.ExcelFile(io.BytesIO(file_bytes), engine=engine, engine_kwargs={'ignore_workbook_corruption': True})
+    else:
+        xls = pd.ExcelFile(io.BytesIO(file_bytes), engine=engine)
     sheet_name = None
     
     # Clean and check sheet names for "order" or "orders"
