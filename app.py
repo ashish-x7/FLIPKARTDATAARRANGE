@@ -961,6 +961,7 @@ def create_folder():
         import tempfile
         
         # Create temp work directory
+        os.makedirs('temp', exist_ok=True)
         temp_work_dir = tempfile.mkdtemp(dir='temp')
         
         # Save merged file bytes to reuse
@@ -1449,6 +1450,7 @@ def invoice_arrange():
         # We check if a zipfile is uploaded
         is_zip_upload = 'zipfile' in request.files
         
+        os.makedirs('temp', exist_ok=True)
         temp_work_dir = tempfile.mkdtemp(dir='temp')
         log_summary = []
         processed_folders = []
@@ -1817,6 +1819,7 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
     import shutil
     import tempfile
     
+    os.makedirs('temp', exist_ok=True)
     from_date = None
     to_date = None
     if from_date_str and to_date_str:
