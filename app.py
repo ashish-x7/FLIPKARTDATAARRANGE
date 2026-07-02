@@ -913,6 +913,19 @@ def split_file_route():
         traceback.print_exc()
         return jsonify({'error': f'Failed splitting file: {str(e)}'}), 500
 
+@app.route('/api/download-split', methods=['GET'])
+def download_split():
+    custom_filename = request.args.get('filename', 'Split_Files.zip')
+    temp_path = os.path.join('temp', 'split_output.zip')
+    if not os.path.exists(temp_path):
+        return jsonify({'error': 'Split ZIP archive not found. Please split again.'}), 400
+    return send_file(
+        temp_path,
+        as_attachment=True,
+        download_name=custom_filename,
+        mimetype='application/zip'
+    )
+
 @app.route('/api/create-folder', methods=['POST'])
 def create_folder():
     try:
