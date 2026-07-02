@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabInvoiceBtn = document.getElementById('tabInvoiceBtn');
     const tabPartyBtn = document.getElementById('tabPartyBtn');
     const tabFlipkartErrorBtn = document.getElementById('tabFlipkartErrorBtn');
+    const tabInvoiceErrorBtn = document.getElementById('tabInvoiceErrorBtn');
     const mergeSection = document.getElementById('mergeSection');
     const renameSection = document.getElementById('renameSection');
     const splitSection = document.getElementById('splitSection');
@@ -17,12 +18,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const invoiceSection = document.getElementById('invoiceSection');
     const partySection = document.getElementById('partySection');
     const flipkartErrorSection = document.getElementById('flipkartErrorSection');
+    const invoiceErrorSection = document.getElementById('invoiceErrorSection');
 
     function setActiveTab(activeBtn, activeSec) {
-        [tabMergeBtn, tabRenameBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn].forEach(btn => {
+        [tabMergeBtn, tabRenameBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn, tabInvoiceErrorBtn].forEach(btn => {
             if (btn) btn.classList.remove('active');
         });
-        [mergeSection, renameSection, splitSection, folderSection, invoiceSection, partySection, flipkartErrorSection].forEach(sec => {
+        [mergeSection, renameSection, splitSection, folderSection, invoiceSection, partySection, flipkartErrorSection, invoiceErrorSection].forEach(sec => {
             if (sec) sec.classList.remove('active');
         });
         if (activeBtn) activeBtn.classList.add('active');
@@ -42,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fetchPartiesList();
     });
     if (tabFlipkartErrorBtn) tabFlipkartErrorBtn.addEventListener('click', () => setActiveTab(tabFlipkartErrorBtn, flipkartErrorSection));
+    if (tabInvoiceErrorBtn) tabInvoiceErrorBtn.addEventListener('click', () => setActiveTab(tabInvoiceErrorBtn, invoiceErrorSection));
 
     // Global Loader
     const loadingOverlay = document.getElementById('loadingOverlay');
@@ -1456,6 +1459,146 @@ document.addEventListener('DOMContentLoaded', () => {
                     errorResultCard.style.display = 'block';
                     errorDownloadBtn.onclick = () => {
                         window.location.href = '/api/download-error-zip';
+                    };
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (error) {
+                hideLoader();
+                alert('Network Error: ' + error.message);
+            }
+        });
+    }
+
+    // ====================================================
+    // TAB 8: INVOICE ERROR LOGIC
+    // ====================================================
+    const invoiceErrorDropzone = document.getElementById('invoiceErrorDropzone');
+    const invoiceErrorFileInput = document.getElementById('invoiceErrorFileInput');
+    const invoiceErrorFileList = document.getElementById('invoiceErrorFileList');
+    const invoiceErrorFileListContainer = document.getElementById('invoiceErrorFileListContainer');
+    const invoiceErrorClearBtn = document.getElementById('invoiceErrorClearBtn');
+    const invoiceErrorProcessBtn = document.getElementById('invoiceErrorProcessBtn');
+    const invoiceErrorResultCard = document.getElementById('invoiceErrorResultCard');
+    const invoiceErrorDownloadBtn = document.getElementById('invoiceErrorDownloadBtn');
+
+    let invoiceErrorFiles = [];
+
+    if (invoiceErrorDropzone && invoiceErrorFileInput) {
+        invoiceErrorDropzone.addEventListener('click', () => invoiceErrorFileInput.click());
+
+        invoiceErrorFileInput.addEventListener('change', (e) => {
+            handleInvoiceErrorFiles(e.target.files);
+        });
+
+        // Drag and drop events
+        ['dragenter', 'dragover'].forEach(eventName => {
+            invoiceErrorDropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                invoiceErrorDropzone.classList.add('dragover');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            invoiceErrorDropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                invoiceErrorDropzone.classList.remove('dragover');
+                if (e.dataTransfer && e.dataTransfer.files) {
+                    handleInvoiceErrorFiles(e.dataTransfer.files);
+                }
+            }, false);
+        });
+    }
+
+    function handleInvoiceErrorFiles(files) {
+        if (files.length === 0) return;
+        invoiceErrorFiles = [files[0]];
+        renderInvoiceErrorFileList();
+    }
+
+    function renderInvoiceErrorFileList() {
+        if (!invoiceErrorFileList) return;
+        invoiceErrorFileList.innerHTML = '';
+        
+        invoiceErrorFiles.forEach((file, index) => {
+            const li = document.createElement('li');
+            li.className = 'file-item';
+            
+            const fileInfo = document.createElement('div');
+            fileInfo.className = 'file-info';
+            
+            const icon = document.createElement('i');
+            icon.className = 'fa-solid fa-file-excel file-icon';
+            
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'file-name';
+            nameSpan.textContent = file.name;
+            
+            const sizeSpan = document.createElement('span');
+            sizeSpan.className = 'file-size';
+            sizeSpan.textContent = ` (${(file.size / 1024).toFixed(1)} KB)`;
+            
+            fileInfo.appendChild(icon);
+            fileInfo.appendChild(nameSpan);
+            fileInfo.appendChild(sizeSpan);
+            
+            const removeBtn = document.createElement('button');
+            removeBtn.className = 'remove-file-btn';
+            removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                invoiceErrorFiles.splice(index, 1);
+                renderInvoiceErrorFileList();
+            });
+            
+            li.appendChild(fileInfo);
+            li.appendChild(removeBtn);
+            invoiceErrorFileList.appendChild(li);
+        });
+
+        if (invoiceErrorFiles.length > 0) {
+            invoiceErrorFileListContainer.style.display = 'block';
+            invoiceErrorResultCard.style.display = 'none';
+        } else {
+            invoiceErrorFileListContainer.style.display = 'none';
+        }
+    }
+
+    if (invoiceErrorClearBtn) {
+        invoiceErrorClearBtn.addEventListener('click', () => {
+            invoiceErrorFiles = [];
+            invoiceErrorFileInput.value = '';
+            renderInvoiceErrorFileList();
+        });
+    }
+
+    if (invoiceErrorProcessBtn) {
+        invoiceErrorProcessBtn.addEventListener('click', async () => {
+            if (invoiceErrorFiles.length === 0) {
+                alert('Please upload a file to process.');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('files[]', invoiceErrorFiles[0]);
+
+            showLoader('Processing Invoice Error Data... Please wait.');
+
+            try {
+                const response = await fetch('/api/invoice-error-process', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                hideLoader();
+
+                if (response.ok) {
+                    invoiceErrorResultCard.style.display = 'block';
+                    invoiceErrorDownloadBtn.onclick = () => {
+                        window.location.href = '/api/download-invoice-error-zip';
                     };
                 } else {
                     alert('Error: ' + data.error);

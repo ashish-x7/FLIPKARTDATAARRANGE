@@ -52,6 +52,9 @@
             <button class="tab-btn" id="tabFlipkartErrorBtn" data-target="flipkartErrorSection">
                 <i class="fa-solid fa-triangle-exclamation"></i> FLIPKART ERROR
             </button>
+            <button class="tab-btn" id="tabInvoiceErrorBtn" data-target="invoiceErrorSection">
+                <i class="fa-solid fa-circle-exclamation"></i> INVOICE ERROR
+            </button>
         </nav>
 
         <main>
@@ -675,6 +678,60 @@
                         </button>
                     </div>
                 </div>
+                </div>
+            </section>
+
+            <!-- ========================================== -->
+            <!-- TAB 8: INVOICE ERROR                       -->
+            <!-- ========================================== -->
+            <section id="invoiceErrorSection" class="tab-content">
+                <div class="card" style="margin-top: 0;">
+                    <div class="card-header">
+                        <div class="header-icon"><i class="fa-solid fa-circle-exclamation"></i></div>
+                        <h2>Invoice Error Logic</h2>
+                    </div>
+                    <div class="card-body" style="padding: 20px;">
+                        <p class="card-desc" style="margin-bottom: 20px; color: var(--text-secondary);">
+                            Provide the logic for Invoice Error processing. Upload your files here to apply the logic.
+                        </p>
+
+                        <!-- File Upload Dropzone -->
+                        <div class="upload-dropzone" id="invoiceErrorDropzone">
+                            <input type="file" id="invoiceErrorFileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                            <div class="dropzone-content">
+                                <i class="fa-solid fa-circle-exclamation upload-icon" style="margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
+                                <h3>Upload Files for Invoice Error</h3>
+                                <p>or <span class="browse-btn">Browse Files</span></p>
+                            </div>
+                        </div>
+
+                        <!-- Selected Files Info -->
+                        <div class="selected-files-container" id="invoiceErrorFileListContainer" style="display: none;">
+                            <h3>Selected Files</h3>
+                            <ul class="files-list" id="invoiceErrorFileList"></ul>
+                            <div class="action-bar">
+                                <button class="btn btn-danger" id="invoiceErrorClearBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                                <button class="btn btn-primary" id="invoiceErrorProcessBtn"><i class="fa-solid fa-play"></i> Process Invoice Error</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Result Dashboard -->
+                <div class="card result-card" id="invoiceErrorResultCard" style="display: none;">
+                    <div class="result-success-banner">
+                        <i class="fa-solid fa-circle-check success-icon"></i>
+                        <div>
+                            <h2>Process Completed Successfully!</h2>
+                            <p>Invoice Error logic applied successfully.</p>
+                        </div>
+                    </div>
+
+                    <div class="download-section">
+                        <button class="btn btn-download" id="invoiceErrorDownloadBtn">
+                            <i class="fa-solid fa-file-zipper"></i> Download ZIP
+                        </button>
+                    </div>
                 </div>
             </section>
         </main>

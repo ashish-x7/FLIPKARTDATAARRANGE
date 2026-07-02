@@ -1024,6 +1024,49 @@ def create_folder():
         last_p = sorted_prefixes[-1]
         zip_filename = f"{first_p}-{last_p}.zip"
         
+        # Check if any folder does not have exactly 3 files
+        error_records = []
+        for p, group_files in prefix_groups.items():
+            total_files = len(group_files) + 1
+            if total_files != 3:
+                error_records.append({
+                    'folder': p,
+                    'count': total_files,
+                    'files': ", ".join(group_files + [merged_filename]),
+                    'status': f"Error: Expected 3 files, found {total_files}"
+                })
+                
+        has_folder_errors = len(error_records) > 0
+        if has_folder_errors:
+            from openpyxl.styles import Font
+            from openpyxl.utils import get_column_letter
+            
+            wb_err = Workbook()
+            ws_err = wb_err.active
+            ws_err.title = "Folder Errors"
+            
+            ws_err.cell(row=1, column=1, value="Folder Name").font = Font(name="Calibri", size=11, bold=True)
+            ws_err.cell(row=1, column=2, value="Total Files Found").font = Font(name="Calibri", size=11, bold=True)
+            ws_err.cell(row=1, column=3, value="Files List").font = Font(name="Calibri", size=11, bold=True)
+            ws_err.cell(row=1, column=4, value="Status").font = Font(name="Calibri", size=11, bold=True)
+            
+            for r_idx, rec in enumerate(error_records, start=2):
+                ws_err.cell(row=r_idx, column=1, value=rec['folder'])
+                ws_err.cell(row=r_idx, column=2, value=rec['count'])
+                ws_err.cell(row=r_idx, column=3, value=rec['files'])
+                ws_err.cell(row=r_idx, column=4, value=rec['status'])
+                
+            for col in ws_err.columns:
+                max_len = 0
+                for cell in col:
+                    if cell.value:
+                        max_len = max(max_len, len(str(cell.value)))
+                col_letter = get_column_letter(col[0].column)
+                ws_err.column_dimensions[col_letter].width = max(max_len + 3, 12)
+                
+            error_filepath = os.path.join(temp_work_dir, "Folder_Errors.xlsx")
+            wb_err.save(error_filepath)
+
         # Create output ZIP archive
         temp_zip_path = os.path.join('temp', 'folder_output.zip')
         if os.path.exists(temp_zip_path):
@@ -1038,6 +1081,9 @@ def create_folder():
                         # Archive path: prefix/file
                         archive_path = os.path.relpath(file_path, temp_work_dir)
                         z.write(file_path, archive_path)
+                        
+            if has_folder_errors:
+                z.write(os.path.join(temp_work_dir, "Folder_Errors.xlsx"), "Folder_Errors.xlsx")
                         
         # Clean up temp folder
         shutil.rmtree(temp_work_dir, ignore_errors=True)
@@ -2032,6 +2078,278 @@ def download_error_zip():
         temp_path,
         as_attachment=True,
         download_name='Flipkart_Error_Output.zip',
+        mimetype='application/zip'
+    )
+
+@app.route('/api/invoice-error-process', methods=['POST'])
+def invoice_error_process():
+    if 'files[]' not in request.files:
+        return jsonify({'error': 'No files uploaded'}), 400
+        
+    files = request.files.getlist('files[]')
+    if not files or files[0].filename == '':
+        return jsonify({'error': 'Empty file uploaded'}), 400
+        
+    file = files[0]
+    
+    try:
+        import tempfile
+        import shutil
+        import zipfile
+        from openpyxl.styles import Alignment, Font
+        
+        file_bytes = file.read()
+        
+        # Load workbook
+        wb_main = load_file_to_openpyxl_workbook(file_bytes, file.filename)
+        ws_main = wb_main.active
+        
+        # We need to find columns H (Description) and I (Seller/Customer Name)
+        # To be safe, let's find the headers from row 1.
+        headers = [str(ws_main.cell(row=1, column=col).value).strip() for col in range(1, ws_main.max_column + 1)]
+        
+        # Let's find "Description" index
+        desc_col_idx = None
+        party_col_idx = None
+        for idx, h in enumerate(headers, start=1):
+            h_upper = h.upper()
+            if 'DESCRIPTION' in h_upper:
+                desc_col_idx = idx
+            elif 'SELLER/CUSTOMER' in h_upper or 'SELLER / CUSTOMER' in h_upper or 'CUSTOMER NAME' in h_upper:
+                party_col_idx = idx
+                
+        # If not found by name, default to Column H (8) and Column I (9)
+        if desc_col_idx is None:
+            desc_col_idx = 8
+        if party_col_idx is None:
+            party_col_idx = 9
+            
+        print(f"[DEBUG Invoice Error] Using Desc Col: {desc_col_idx}, Party Col: {party_col_idx}", flush=True)
+        
+        # 1. Clean-up: Delete all rows where Column H is "Already Sale Bill Generated."
+        deleted_count = 0
+        for r in range(ws_main.max_row, 1, -1):
+            val = ws_main.cell(row=r, column=desc_col_idx).value
+            if val is not None and str(val).strip() == "Already Sale Bill Generated.":
+                ws_main.delete_rows(r, 1)
+                deleted_count += 1
+                
+        # Create temp work directory
+        os.makedirs('temp', exist_ok=True)
+        temp_work_dir = tempfile.mkdtemp(dir='temp')
+        
+        # Save cleaned main file
+        cleaned_main_filename = f"Cleaned_{file.filename}"
+        cleaned_main_path = os.path.join(temp_work_dir, cleaned_main_filename)
+        wb_main.save(cleaned_main_path)
+        
+        # 2. Extract data to group by Error and Party
+        data_rows = []
+        for r in range(2, ws_main.max_row + 1):
+            row_vals = [ws_main.cell(row=r, column=c).value for c in range(1, ws_main.max_column + 1)]
+            if any(val is not None for val in row_vals):
+                data_rows.append(row_vals)
+                
+        # Group by Error and Party
+        groups = {}
+        for row in data_rows:
+            desc_val = str(row[desc_col_idx - 1] or '').strip()
+            party_val = str(row[party_col_idx - 1] or '').strip()
+            
+            if not desc_val or not party_val:
+                continue
+                
+            group_key = (party_val, desc_val)
+            if group_key not in groups:
+                groups[group_key] = []
+            groups[group_key].append(row)
+            
+        # Write individual files and collect info
+        individual_files_info = []
+        summary_records = []
+        
+        # Create a merged workbook "Flipkart Merged_Errors.xlsx"
+        wb_merged = Workbook()
+        wb_merged.remove(wb_merged.active)
+        
+        header_vals = [ws_main.cell(row=1, column=c).value for c in range(1, ws_main.max_column + 1)]
+        
+        for (party, error), rows in groups.items():
+            # Clean party and error names for filenames and sheet names
+            safe_party = "".join(c for c in party if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_error = "".join(c for c in error if c.isalnum() or c in (' ', '-', '_')).strip()
+            
+            combo_name = f"{safe_party}-{safe_error}"
+            filename = f"{combo_name}.xlsx"
+            filepath = os.path.join(temp_work_dir, filename)
+            
+            # Create individual workbook
+            wb_ind = Workbook()
+            ws_ind = wb_ind.active
+            
+            # Truncate sheet name to 31 chars
+            sheet_title = combo_name[:31].strip()
+            ws_ind.title = sheet_title
+            
+            # Merged Row 1
+            col_max = len(header_vals)
+            from openpyxl.utils import get_column_letter
+            col_letter_max = get_column_letter(col_max)
+            
+            ws_ind.merge_cells(f"A1:{col_letter_max}1")
+            cell_title = ws_ind["A1"]
+            cell_title.value = combo_name
+            cell_title.font = Font(name="Calibri", size=14, bold=True)
+            cell_title.alignment = Alignment(horizontal="center", vertical="center")
+            ws_ind.row_dimensions[1].height = 35
+            
+            # Headers in Row 2
+            for c_idx, h_val in enumerate(header_vals, start=1):
+                cell_h = ws_ind.cell(row=2, column=c_idx, value=h_val)
+                cell_h.font = Font(name="Calibri", size=11, bold=True)
+                
+            # Data in Row 3 onwards
+            for r_idx, row_data in enumerate(rows, start=3):
+                for c_idx, val in enumerate(row_data, start=1):
+                    ws_ind.cell(row=r_idx, column=c_idx, value=val)
+                    
+            # Auto-fit columns
+            for col in ws_ind.columns:
+                max_len = 0
+                for cell in col:
+                    if cell.value:
+                        max_len = max(max_len, len(str(cell.value)))
+                col_letter = get_column_letter(col[0].column)
+                ws_ind.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 50)
+                
+            wb_ind.save(filepath)
+            individual_files_info.append((filename, filepath))
+            
+            # Add to Flipkart Merged_Errors.xlsx
+            ws_merged = wb_merged.create_sheet(title=sheet_title)
+            # Merged Row 1
+            ws_merged.merge_cells(f"A1:{col_letter_max}1")
+            cell_title_m = ws_merged["A1"]
+            cell_title_m.value = combo_name
+            cell_title_m.font = Font(name="Calibri", size=14, bold=True)
+            cell_title_m.alignment = Alignment(horizontal="center", vertical="center")
+            ws_merged.row_dimensions[1].height = 35
+            
+            # Headers Row 2
+            for c_idx, h_val in enumerate(header_vals, start=1):
+                cell_h = ws_merged.cell(row=2, column=c_idx, value=h_val)
+                cell_h.font = Font(name="Calibri", size=11, bold=True)
+                
+            # Data Row 3+
+            for r_idx, row_data in enumerate(rows, start=3):
+                for c_idx, val in enumerate(row_data, start=1):
+                    ws_merged.cell(row=r_idx, column=c_idx, value=val)
+                    
+            # Auto-fit columns in merged
+            for col in ws_merged.columns:
+                max_len = 0
+                for cell in col:
+                    if cell.value:
+                        max_len = max(max_len, len(str(cell.value)))
+                col_letter = get_column_letter(col[0].column)
+                ws_merged.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 50)
+                
+            summary_records.append({
+                'party': party,
+                'error': error,
+                'rows_count': len(rows)
+            })
+            
+        # Save Flipkart Merged_Errors.xlsx
+        merged_filepath = os.path.join(temp_work_dir, "Flipkart Merged_Errors.xlsx")
+        wb_merged.save(merged_filepath)
+        
+        # 3. Create Summary.xlsx
+        wb_summary = Workbook()
+        ws_summary = wb_summary.active
+        ws_summary.title = "Summary"
+        
+        ws_summary.cell(row=1, column=1, value="Party Name").font = Font(name="Calibri", size=11, bold=True)
+        ws_summary.cell(row=1, column=2, value="Error Description").font = Font(name="Calibri", size=11, bold=True)
+        ws_summary.cell(row=1, column=3, value="Total Error Rows").font = Font(name="Calibri", size=11, bold=True)
+        
+        for r_idx, rec in enumerate(summary_records, start=2):
+            ws_summary.cell(row=r_idx, column=1, value=rec['party'])
+            ws_summary.cell(row=r_idx, column=2, value=rec['error'])
+            ws_summary.cell(row=r_idx, column=3, value=rec['rows_count'])
+            
+        # Auto-fit summary columns
+        for col in ws_summary.columns:
+            max_len = 0
+            for cell in col:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+            col_letter = get_column_letter(col[0].column)
+            ws_summary.column_dimensions[col_letter].width = max(max_len + 3, 12)
+            
+        summary_filepath = os.path.join(temp_work_dir, "Summary.xlsx")
+        wb_summary.save(summary_filepath)
+        
+        # Package everything in a ZIP archive
+        zip_path = os.path.join('temp', 'Invoice_Error_Output.zip')
+        if os.path.exists(zip_path):
+            try: os.remove(zip_path)
+            except: pass
+            
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            zf.write(cleaned_main_path, cleaned_main_filename)
+            zf.write(merged_filepath, "Flipkart Merged_Errors.xlsx")
+            zf.write(summary_filepath, "Summary.xlsx")
+            for fname, fpath in individual_files_info:
+                zf.write(fpath, fname)
+                
+        shutil.rmtree(temp_work_dir, ignore_errors=True)
+        
+        log_entries = []
+        log_entries.append({
+            'operation': 'Main File Cleaned',
+            'value': f"Deleted {deleted_count} rows containing 'Already Sale Bill Generated.'",
+            'status': 'Success'
+        })
+        log_entries.append({
+            'operation': 'Flipkart Merged_Errors.xlsx Created',
+            'value': f"Contains {len(groups)} sheets",
+            'status': 'Success'
+        })
+        log_entries.append({
+            'operation': 'Summary.xlsx Created',
+            'value': f"{len(summary_records)} items recorded",
+            'status': 'Success'
+        })
+        for fname, _ in individual_files_info:
+            log_entries.append({
+                'operation': f"Individual File Created",
+                'value': fname,
+                'status': 'Success'
+            })
+            
+        return jsonify({
+            'message': 'Invoice Error workflow completed successfully!',
+            'files_count': len(individual_files_info) + 3,
+            'zip_filename': 'Invoice_Error_Output.zip',
+            'log': log_entries
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed processing Invoice Error: {str(e)}'}), 500
+
+@app.route('/api/download-invoice-error-zip', methods=['GET'])
+def download_invoice_error_zip():
+    temp_path = os.path.join('temp', 'Invoice_Error_Output.zip')
+    if not os.path.exists(temp_path):
+        return jsonify({'error': 'ZIP file not found.'}), 400
+        
+    return send_file(
+        temp_path,
+        as_attachment=True,
+        download_name='Invoice_Error_Output.zip',
         mimetype='application/zip'
     )
 
