@@ -1292,6 +1292,53 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
             for c_idx in range(1, 7):
                 ws_gst.cell(row=new_row_gst, column=c_idx).fill = row_fill
                 
+            # Write new values and calculations directly in ws_dt
+            import math
+            def excel_round(val, decimals=0):
+                multiplier = 10 ** decimals
+                shifted = val * multiplier
+                if shifted >= 0:
+                    rounded = math.floor(shifted + 0.5)
+                else:
+                    rounded = math.ceil(shifted - 0.5)
+                return rounded / multiplier if decimals > 0 else int(rounded)
+            
+            # Tax Rate AP (column 42) = 5
+            ws_dt.cell(row=r, column=42, value=5)
+            
+            # Get Selling Price value (column 48)
+            val_av_raw = ws_dt.cell(row=r, column=48).value
+            val_av = 0.0
+            if val_av_raw is not None:
+                try:
+                    val_av = float(str(val_av_raw).replace(",", ""))
+                except ValueError:
+                    pass
+                    
+            # Item Price(Excluding Tax) AX (column 50) = ROUND(AV/1.05, 0)
+            val_ax = excel_round(val_av / 1.05, 0)
+            ws_dt.cell(row=r, column=50, value=val_ax)
+            
+            # IGST Rate BH (column 60) = ROUND(AV-ROUND(AV/1.05, 4), 4)
+            round_part = excel_round(val_av / 1.05, 4)
+            val_bh = excel_round(val_av - round_part, 4)
+            ws_dt.cell(row=r, column=60, value=val_bh)
+            
+            # Check Billing State (column 40)
+            state_raw = ws_dt.cell(row=r, column=40).value
+            state_val = str(state_raw or "").strip().lower()
+            
+            if state_val == "gujarat":
+                ws_dt.cell(row=r, column=61, value="") # IGST Amount BI (column 61)
+                val_bj = excel_round((val_av - round_part) / 2, 4)
+                ws_dt.cell(row=r, column=62, value=val_bj) # CGST Amount BJ (column 62)
+                ws_dt.cell(row=r, column=63, value=val_bj) # SGST Amount BK (column 63)
+            else:
+                val_bi = excel_round(val_av - round_part, 4)
+                ws_dt.cell(row=r, column=61, value=val_bi) # IGST Amount BI (column 61)
+                ws_dt.cell(row=r, column=62, value="") # CGST Amount BJ (column 62)
+                ws_dt.cell(row=r, column=63, value="") # SGST Amount BK (column 63)
+            
             for c_col in [7, 9, 13, 18, 48, 50]:
                 ws_dt.cell(row=r, column=c_col).fill = light_green_fill
             ws_dt.cell(row=r, column=42).fill = ap_green_fill
