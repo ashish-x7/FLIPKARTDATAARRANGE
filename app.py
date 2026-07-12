@@ -689,10 +689,12 @@ def rename_files():
             for filename, data in final_files:
                 zip_file.writestr(filename, data)
                 
+        out_filename = 'flipkart_order_rename_file.zip' if option == 'yes' else 'flipkart_tax_rename_file.zip'
+                
         return jsonify({
             'message': f'Successfully renamed {len(final_files)} files!',
             'type': 'zip',
-            'filename': 'Renamed_Files.zip',
+            'filename': out_filename,
             'log': renamed_log,
             'mapping_detected': mapping_name_detected
         })
@@ -897,9 +899,13 @@ def split_file_route():
                 'key': key_extracted
             })
             
-        import datetime
-        safe_orig_name = "".join(c for c in os.path.splitext(file.filename)[0] if c.isalnum() or c in ['_', '-']).strip()
-        zip_filename = f"Split_{safe_orig_name}_{datetime.datetime.now().strftime('%d-%m-%Y')}.zip"
+        option_filenames = {
+            '1': 'flipkart_simple_seprate_bundle.zip',
+            '2': 'flipkart_details_seprate_bundle.zip',
+            '3': 'flipkart_summaary_seprate_bundle.zip',
+            '4': 'flipkart_tax_seprate_bundle.zip'
+        }
+        zip_filename = option_filenames.get(option, 'flipkart_simple_seprate_bundle.zip')
         
         return jsonify({
             'message': 'Spreadsheet split successfully!',
@@ -1759,6 +1765,8 @@ def invoice_arrange():
                     
         shutil.rmtree(temp_work_dir, ignore_errors=True)
         
+        zip_display_name = "flipkart_data_arrange_bundle.zip"
+        
         return jsonify({
             'message': 'Invoice Arrange workflow completed successfully!',
             'files_count': total_files_count,
@@ -1907,6 +1915,78 @@ def delete_party():
     except Exception as e:
         return jsonify({'error': f'Failed deleting party: {str(e)}'}), 500
 
+@app.route('/api/tracker', methods=['GET'])
+def get_tracker():
+    url = get_apps_script_url()
+    import requests
+    try:
+        r = requests.get(f"{url}?action=getTrackedErrors", allow_redirects=True, timeout=15)
+        try:
+            return jsonify(r.json())
+        except Exception:
+            preview = r.text[:250]
+            return jsonify({
+                'error': f'Google Apps Script returned non-JSON output. Response preview: {preview}'
+            }), 400
+    except Exception as e:
+        return jsonify({'error': f'Failed connecting to Google Apps Script: {str(e)}'}), 500
+
+def handle_apps_script_post(url, payload):
+    import requests
+    import re
+    try:
+        r = requests.post(url, json=payload, allow_redirects=True, timeout=15)
+        try:
+            return jsonify(r.json())
+        except Exception:
+            err_msg = r.text
+            match = re.search(r'Exception: ([^<]+)', r.text)
+            if match:
+                err_msg = match.group(1).replace('&quot;', '"')
+            else:
+                err_msg = r.text[:300]
+            return jsonify({'error': f'Google Apps Script Error: {err_msg}'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/tracker/add', methods=['POST'])
+def add_tracker_error():
+    url = get_apps_script_url()
+    data = request.get_json() or {}
+    payload = {
+        'action': 'addTrackedError',
+        **data
+    }
+    return handle_apps_script_post(url, payload)
+
+@app.route('/api/tracker/solve', methods=['POST'])
+def solve_tracker_error():
+    url = get_apps_script_url()
+    data = request.get_json() or {}
+    payload = {
+        'action': 'solveTrackedError',
+        **data
+    }
+    return handle_apps_script_post(url, payload)
+
+@app.route('/api/tracker/delete', methods=['POST'])
+def delete_tracker_error():
+    url = get_apps_script_url()
+    data = request.get_json() or {}
+    payload = {
+        'action': 'deleteTrackedError',
+        **data
+    }
+    return handle_apps_script_post(url, payload)
+
+@app.route('/api/tracker/clear', methods=['POST'])
+def clear_tracker_errors():
+    url = get_apps_script_url()
+    payload = {
+        'action': 'clearTrackedErrors'
+    }
+    return handle_apps_script_post(url, payload)
+
 def process_flipkart_error(details_bytes, details_filename, data_bytes, data_filename, from_date_str, to_date_str):
     import datetime
     import shutil
@@ -1986,6 +2066,7 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
             
     temp_work_dir = tempfile.mkdtemp(dir='temp')
     party_files_info = []
+    party_records = []
     
     wb_master = Workbook()
     wb_master.remove(wb_master.active)
@@ -2055,6 +2136,12 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
         wb_party.save(party_filepath)
         party_files_info.append((party_filename, party_filepath))
         
+        party_records.append({
+            'party': party,
+            'filename': party_filename,
+            'rows_count': len(rows)
+        })
+        
     if not wb_master.sheetnames:
         wb_master.create_sheet(title="No Errors")
     master_filepath = os.path.join(temp_work_dir, "FLIPKART price dispute.xlsx")
@@ -2079,7 +2166,7 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
             zf.write(p_path, p_name)
             
     shutil.rmtree(temp_work_dir, ignore_errors=True)
-    return zip_path
+    return zip_path, party_records
 
 @app.route('/api/flipkart-error', methods=['POST'])
 def flipkart_error_api():
@@ -2100,7 +2187,7 @@ def flipkart_error_api():
         details_bytes = details_file.read()
         data_bytes = data_file.read()
         
-        zip_path = process_flipkart_error(
+        zip_path, party_records = process_flipkart_error(
             details_bytes, details_file.filename,
             data_bytes, data_file.filename,
             from_date_str, to_date_str
@@ -2108,7 +2195,8 @@ def flipkart_error_api():
         
         return jsonify({
             'message': 'Flipkart Error processed successfully!',
-            'zip_path': zip_path
+            'zip_path': zip_path,
+            'records': party_records
         })
     except Exception as e:
         import traceback
@@ -2124,7 +2212,7 @@ def download_error_zip():
     return send_file(
         temp_path,
         as_attachment=True,
-        download_name='Flipkart_Error_Output.zip',
+        download_name='flipkart_price_dispute_bundle.zip',
         mimetype='application/zip'
     )
 
@@ -2304,7 +2392,8 @@ def invoice_error_process():
             summary_records.append({
                 'party': party,
                 'error': error,
-                'rows_count': len(rows)
+                'rows_count': len(rows),
+                'filename': filename
             })
             
         # Save Flipkart Merged_Errors.xlsx
@@ -2379,7 +2468,8 @@ def invoice_error_process():
             'message': 'Invoice Error workflow completed successfully!',
             'files_count': len(individual_files_info) + 3,
             'zip_filename': 'Invoice_Error_Output.zip',
-            'log': log_entries
+            'log': log_entries,
+            'records': summary_records
         })
         
     except Exception as e:
@@ -2396,9 +2486,39 @@ def download_invoice_error_zip():
     return send_file(
         temp_path,
         as_attachment=True,
-        download_name='Invoice_Error_Output.zip',
+        download_name='flipkart_error_bundle.zip',
         mimetype='application/zip'
     )
+
+@app.route('/api/test-download-invoice-dummy', methods=['GET'])
+def test_download_invoice_dummy():
+    import zipfile
+    os.makedirs('temp', exist_ok=True)
+    temp_zip_path = os.path.join('temp', 'invoice_output.zip')
+    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr("test_file.txt", "This is dummy test file content.")
+    return jsonify({
+        "status": "success",
+        "zip_filename": "flipkart_data_arrange_bundle.zip"
+    })
+
+@app.route('/api/test-download-flipkart-error-dummy', methods=['GET'])
+def test_download_flipkart_error_dummy():
+    import zipfile
+    os.makedirs('temp', exist_ok=True)
+    temp_zip_path = os.path.join('temp', 'Flipkart_Error_Output.zip')
+    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr("test_flipkart_error.txt", "Dummy content for Flipkart Error testing.")
+    return jsonify({"status": "success"})
+
+@app.route('/api/test-download-invoice-error-dummy', methods=['GET'])
+def test_download_invoice_error_dummy():
+    import zipfile
+    os.makedirs('temp', exist_ok=True)
+    temp_zip_path = os.path.join('temp', 'Invoice_Error_Output.zip')
+    with zipfile.ZipFile(temp_zip_path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr("test_invoice_error.txt", "Dummy content for Invoice Error testing.")
+    return jsonify({"status": "success"})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

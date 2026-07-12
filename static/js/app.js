@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabPartyBtn = document.getElementById('tabPartyBtn');
     const tabFlipkartErrorBtn = document.getElementById('tabFlipkartErrorBtn');
     const tabInvoiceErrorBtn = document.getElementById('tabInvoiceErrorBtn');
+    const tabErrorTrackerBtn = document.getElementById('tabErrorTrackerBtn');
     const mergeSection = document.getElementById('mergeSection');
     const renameSection = document.getElementById('renameSection');
     const splitSection = document.getElementById('splitSection');
@@ -19,12 +20,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const partySection = document.getElementById('partySection');
     const flipkartErrorSection = document.getElementById('flipkartErrorSection');
     const invoiceErrorSection = document.getElementById('invoiceErrorSection');
+    const errorTrackerSection = document.getElementById('errorTrackerSection');
 
     function setActiveTab(activeBtn, activeSec) {
-        [tabMergeBtn, tabRenameBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn, tabInvoiceErrorBtn].forEach(btn => {
+        [tabMergeBtn, tabRenameBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn, tabInvoiceErrorBtn, tabErrorTrackerBtn].forEach(btn => {
             if (btn) btn.classList.remove('active');
         });
-        [mergeSection, renameSection, splitSection, folderSection, invoiceSection, partySection, flipkartErrorSection, invoiceErrorSection].forEach(sec => {
+        [mergeSection, renameSection, splitSection, folderSection, invoiceSection, partySection, flipkartErrorSection, invoiceErrorSection, errorTrackerSection].forEach(sec => {
             if (sec) sec.classList.remove('active');
         });
         if (activeBtn) activeBtn.classList.add('active');
@@ -45,6 +47,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (tabFlipkartErrorBtn) tabFlipkartErrorBtn.addEventListener('click', () => setActiveTab(tabFlipkartErrorBtn, flipkartErrorSection));
     if (tabInvoiceErrorBtn) tabInvoiceErrorBtn.addEventListener('click', () => setActiveTab(tabInvoiceErrorBtn, invoiceErrorSection));
+    if (tabErrorTrackerBtn) tabErrorTrackerBtn.addEventListener('click', () => {
+        setActiveTab(tabErrorTrackerBtn, errorTrackerSection);
+        renderErrorTracker();
+    });
 
     // Global Loader
     const loadingOverlay = document.getElementById('loadingOverlay');
@@ -1460,6 +1466,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     errorDownloadBtn.onclick = () => {
                         window.location.href = '/api/download-error-zip';
                     };
+                    if (data.records && data.records.length > 0) {
+                        for (const rec of data.records) {
+                            await registerTrackedError('flipkart', rec.filename, rec.party, 'Price Dispute', rec.rows_count);
+                        }
+                    }
                 } else {
                     alert('Error: ' + data.error);
                 }
@@ -1600,6 +1611,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     invoiceErrorDownloadBtn.onclick = () => {
                         window.location.href = '/api/download-invoice-error-zip';
                     };
+                    if (data.records && data.records.length > 0) {
+                        for (const rec of data.records) {
+                            await registerTrackedError('invoice', rec.filename, rec.party, rec.error, rec.rows_count);
+                        }
+                    }
                 } else {
                     alert('Error: ' + data.error);
                 }
@@ -1609,5 +1625,430 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+    // ====================================================
+    // TAB 9: ERROR TRACKER SYSTEM
+    // ====================================================
+    // Custom Confirmation Modal System
+    function showCustomConfirm(title, message, callback) {
+        let backdrop = document.getElementById('customConfirmBackdrop');
+        if (!backdrop) {
+            backdrop = document.createElement('div');
+            backdrop.id = 'customConfirmBackdrop';
+            backdrop.className = 'custom-modal-backdrop';
+            backdrop.innerHTML = `
+                <div class="custom-modal-card" style="border: 1px solid rgba(220, 38, 38, 0.15); box-shadow: 0 20px 25px -5px rgba(220, 38, 38, 0.05); text-align: left;">
+                    <div class="custom-modal-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+                        <span class="custom-modal-icon error" style="background: rgba(220, 38, 38, 0.1); color: var(--danger); display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border-radius: 50%; font-size: 1.25rem;"><i class="fa-solid fa-triangle-exclamation"></i></span>
+                        <h3 class="custom-modal-title" id="customConfirmTitle" style="margin: 0; font-weight: 700; font-size: 1.2rem; color: var(--text-primary);">Confirm Action</h3>
+                    </div>
+                    <div class="custom-modal-body" id="customConfirmBody" style="margin-bottom: 1.5rem; line-height: 1.6; font-size: 0.9rem; color: var(--text-secondary);"></div>
+                    <div class="custom-modal-footer" style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+                        <button class="btn btn-secondary custom-modal-close-btn" id="customConfirmCancelBtn" style="background: #e2e8f0; color: #334155; border: 1px solid #cbd5e1; height: 36px; border-radius: 8px; font-weight: 600; font-size: 0.8rem; cursor: pointer; transition: all 0.2s ease; margin-top: 0; min-width: 80px;">Cancel</button>
+                        <button class="btn btn-danger custom-modal-close-btn" id="customConfirmOkBtn" style="background: var(--danger); border-color: var(--danger); color: white; height: 36px; border-radius: 8px; font-weight: 600; font-size: 0.8rem; cursor: pointer; transition: all 0.2s ease; margin-top: 0; min-width: 80px;">Delete</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(backdrop);
+        }
+
+        const titleEl = document.getElementById('customConfirmTitle');
+        const bodyEl = document.getElementById('customConfirmBody');
+        const okBtn = document.getElementById('customConfirmOkBtn');
+        const cancelBtn = document.getElementById('customConfirmCancelBtn');
+
+        titleEl.innerText = title;
+        bodyEl.innerText = message;
+
+        const newOkBtn = okBtn.cloneNode(true);
+        const newCancelBtn = cancelBtn.cloneNode(true);
+        okBtn.parentNode.replaceChild(newOkBtn, okBtn);
+        cancelBtn.parentNode.replaceChild(newCancelBtn, cancelBtn);
+
+        newOkBtn.addEventListener('click', () => {
+            backdrop.classList.remove('show');
+            callback(true);
+        });
+
+        const closeConfirm = () => {
+            backdrop.classList.remove('show');
+            callback(false);
+        };
+
+        newCancelBtn.addEventListener('click', closeConfirm);
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) {
+                closeConfirm();
+            }
+        });
+
+        setTimeout(() => {
+            backdrop.classList.add('show');
+        }, 50);
+    }
+
+    let trackerSyncStatus = 'offline';
+
+    function updateTrackerSyncBadge() {
+        const badge = document.getElementById('trackerSyncBadge');
+        if (!badge) return;
+        if (trackerSyncStatus === 'online') {
+            badge.style.background = 'rgba(16, 185, 129, 0.1)';
+            badge.style.color = 'var(--success)';
+            badge.innerText = 'Google Sheets Sync Active';
+        } else {
+            badge.style.background = 'rgba(245, 158, 11, 0.1)';
+            badge.style.color = '#d97706';
+            badge.innerText = 'Offline Backup Mode';
+        }
+    }
+
+    async function fetchTrackedErrors() {
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            const response = await fetch('/api/tracker', { signal: controller.signal });
+            clearTimeout(timeoutId);
+            const result = await response.json();
+            if (result && result.status === 'success') {
+                trackerSyncStatus = 'online';
+                updateTrackerSyncBadge();
+                return result.errors || [];
+            }
+        } catch (e) {
+            console.warn("Google Sheets Error Tracker connection failed, using local storage:", e);
+        }
+
+        trackerSyncStatus = 'offline';
+        updateTrackerSyncBadge();
+
+        let records = JSON.parse(localStorage.getItem('trackedErrors') || '[]');
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+        const now = Date.now();
+        records = records.filter(r => (now - new Date(r.createdDate).getTime()) < THIRTY_DAYS_MS);
+        localStorage.setItem('trackedErrors', JSON.stringify(records));
+        return records;
+    }
+
+    async function registerTrackedError(type, fileName, partyOrWh, errorType, rowsCount) {
+        const newRecord = {
+            id: 'err-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9),
+            type: type,
+            fileName: fileName,
+            partyOrWh: partyOrWh,
+            errorType: errorType,
+            rowsCount: rowsCount,
+            createdDate: new Date().toISOString(),
+            solved: false,
+            solvedDate: ''
+        };
+
+        let records = JSON.parse(localStorage.getItem('trackedErrors') || '[]');
+        records.push(newRecord);
+        localStorage.setItem('trackedErrors', JSON.stringify(records));
+
+        try {
+            const response = await fetch('/api/tracker/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(newRecord)
+            });
+            const result = await response.json();
+            if (result && result.status === 'success') {
+                trackerSyncStatus = 'online';
+                updateTrackerSyncBadge();
+            }
+        } catch (e) {
+            console.warn("Failed to write tracked error to Google Sheets:", e);
+        }
+    }
+
+    async function solveTrackedError(id) {
+        const solvedDate = new Date().toISOString();
+
+        let records = JSON.parse(localStorage.getItem('trackedErrors') || '[]');
+        const idx = records.findIndex(r => r.id === id);
+        if (idx !== -1) {
+            records[idx].solved = true;
+            records[idx].solvedDate = solvedDate;
+            localStorage.setItem('trackedErrors', JSON.stringify(records));
+        }
+
+        try {
+            const response = await fetch('/api/tracker/solve', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id, solvedDate: solvedDate })
+            });
+            const result = await response.json();
+            if (result && result.status === 'success') {
+                trackerSyncStatus = 'online';
+                updateTrackerSyncBadge();
+            }
+        } catch (e) {
+            console.warn("Failed to solve tracked error on Google Sheets:", e);
+        }
+    }
+
+    async function deleteTrackedError(id) {
+        let records = JSON.parse(localStorage.getItem('trackedErrors') || '[]');
+        records = records.filter(r => r.id !== id);
+        localStorage.setItem('trackedErrors', JSON.stringify(records));
+
+        try {
+            const response = await fetch('/api/tracker/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: id })
+            });
+            const result = await response.json();
+            if (result && result.status === 'success') {
+                trackerSyncStatus = 'online';
+                updateTrackerSyncBadge();
+            }
+        } catch (e) {
+            console.warn("Failed to delete tracked error from Google Sheets:", e);
+        }
+    }
+
+    async function clearTrackedErrorsDb() {
+        localStorage.removeItem('trackedErrors');
+        try {
+            const response = await fetch('/api/tracker/clear', {
+                method: 'POST'
+            });
+            const result = await response.json();
+            if (result && result.status === 'success') {
+                trackerSyncStatus = 'online';
+                updateTrackerSyncBadge();
+            }
+        } catch (e) {
+            console.warn("Failed to clear tracked errors on Google Sheets:", e);
+        }
+    }
+
+    async function renderErrorTracker() {
+        const statsActive = document.getElementById('statsActiveErrors');
+        const statsSolved = document.getElementById('statsSolvedErrors');
+        const statsTotal = document.getElementById('statsTotalErrors');
+        const container = document.getElementById('trackerTableContainer');
+        const searchInput = document.getElementById('trackerSearchInput');
+        const statusFilter = document.getElementById('trackerStatusFilter');
+        const sourceFilter = document.getElementById('trackerSourceFilter');
+
+        if (!container) return;
+
+        container.innerHTML = `
+            <div class="empty-output-state" style="text-align: center; padding: 40px 20px;">
+                <i class="fa-solid fa-spinner fa-spin placeholder-icon" style="color: var(--primary); font-size: 2rem; margin-bottom: 15px; display: block;"></i>
+                <p style="color: var(--text-secondary);">Loading tracked errors list from database...</p>
+            </div>
+        `;
+
+        const errors = await fetchTrackedErrors();
+
+        const activeCount = errors.filter(e => !e.solved).length;
+        const solvedCount = errors.filter(e => e.solved).length;
+        const totalCount = errors.length;
+
+        if (statsActive) statsActive.innerText = activeCount;
+        if (statsSolved) statsSolved.innerText = solvedCount;
+        if (statsTotal) statsTotal.innerText = totalCount;
+
+        const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+        const statusVal = statusFilter ? statusFilter.value : 'all';
+        const sourceVal = sourceFilter ? sourceFilter.value : 'all';
+
+        const filtered = errors.filter(item => {
+            const matchesQuery = !query ||
+                String(item.fileName).toLowerCase().includes(query) ||
+                String(item.partyOrWh).toLowerCase().includes(query) ||
+                String(item.errorType).toLowerCase().includes(query);
+
+            const matchesStatus = statusVal === 'all' ||
+                (statusVal === 'active' && !item.solved) ||
+                (statusVal === 'solved' && item.solved);
+
+            const matchesSource = sourceVal === 'all' || item.type === sourceVal;
+
+            return matchesQuery && matchesStatus && matchesSource;
+        });
+
+        filtered.sort((a, b) => {
+            if (a.solved !== b.solved) {
+                return a.solved ? 1 : -1;
+            }
+            return new Date(b.createdDate) - new Date(a.createdDate);
+        });
+
+        if (filtered.length === 0) {
+            container.innerHTML = `
+                <div class="empty-output-state" style="text-align: center; padding: 40px 20px;">
+                    <i class="fa-solid fa-square-check placeholder-icon" style="color: var(--success); font-size: 2rem; margin-bottom: 15px; display: block; opacity: 0.8;"></i>
+                    <p style="color: var(--text-secondary);">No tracked errors match your criteria.</p>
+                </div>
+            `;
+            return;
+        }
+
+        const table = document.createElement('table');
+        table.style.width = '100%';
+        table.style.borderCollapse = 'collapse';
+        table.style.fontSize = '0.85rem';
+        table.style.textAlign = 'left';
+
+        table.innerHTML = `
+            <thead>
+                <tr style="border-bottom: 2px solid var(--border-color); color: var(--text-primary);">
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">Source</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">File / Error Details</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">Party / Wh</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase; text-align: right;">Rows</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">Date Added</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase;">Days Active</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase; text-align: center;">Status</th>
+                    <th style="padding: 0.75rem; font-weight: 700; font-size: 0.75rem; text-transform: uppercase; text-align: center;">Action</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        `;
+
+        const tbody = table.querySelector('tbody');
+
+        filtered.forEach(record => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid var(--border-color)';
+            tr.style.transition = 'all 0.2s ease';
+
+            tr.addEventListener('mouseenter', () => {
+                tr.style.background = 'rgba(99, 102, 241, 0.02)';
+            });
+            tr.addEventListener('mouseleave', () => {
+                tr.style.background = 'transparent';
+            });
+
+            const isFlipkart = record.type === 'flipkart';
+            const sourceBadge = isFlipkart
+                ? `<span style="background: rgba(37, 99, 235, 0.08); color: var(--primary); border: 1px solid rgba(37, 99, 235, 0.15); padding: 0.2rem 0.45rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">FLIPKART ERROR</span>`
+                : `<span style="background: rgba(99, 102, 241, 0.08); color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.15); padding: 0.2rem 0.45rem; border-radius: 6px; font-size: 0.75rem; font-weight: 600;">INVOICE ERROR</span>`;
+
+            const detailHtml = `
+                <div style="font-weight: 600; color: var(--text-primary);">${record.fileName}</div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.1rem;">${record.errorType}</div>
+            `;
+
+            const createdTime = new Date(record.createdDate).getTime();
+            const endTime = record.solved ? new Date(record.solvedDate).getTime() : Date.now();
+            const diffDays = Math.max(0, Math.floor((endTime - createdTime) / (1000 * 60 * 60 * 24)));
+            const daysText = record.solved
+                ? `<span style="color: var(--text-secondary); font-size: 0.8rem;">Solved in ${diffDays} day${diffDays === 1 ? '' : 's'}</span>`
+                : `<span style="color: var(--danger); font-weight: 700; font-size: 0.85rem; display: flex; align-items: center; gap: 0.25rem;"><i class="fa-regular fa-clock"></i> ${diffDays} Day${diffDays === 1 ? '' : 's'}</span>`;
+
+            const addedDateFormatted = new Date(record.createdDate).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
+            const statusBadge = record.solved
+                ? `<span style="background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.2); padding: 0.25rem 0.5rem; border-radius: 20px; font-weight: 600; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.3rem;"><i class="fa-solid fa-circle-check"></i> Solved</span>`
+                : `<span style="background: rgba(220, 38, 38, 0.1); color: var(--danger); border: 1px solid rgba(220, 38, 38, 0.2); padding: 0.25rem 0.5rem; border-radius: 20px; font-weight: 600; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.3rem;"><i class="fa-solid fa-triangle-exclamation"></i> Active</span>`;
+
+            const actionHtml = record.solved
+                ? `<div style="display: flex; gap: 0.4rem; justify-content: center; align-items: center;">
+                       <span style="font-size: 0.75rem; color: var(--text-secondary); font-style: italic; margin-right: 0.3rem;">Solved</span>
+                       <button class="btn btn-danger delete-tracker-btn" data-id="${record.id}" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; margin-top: 0; line-height: 1;"><i class="fa-solid fa-trash-can"></i></button>
+                   </div>`
+                : `<div style="display: flex; gap: 0.4rem; justify-content: center; align-items: center;">
+                       <button class="btn btn-primary solve-tracker-btn" data-id="${record.id}" style="padding: 0.35rem 0.7rem; font-size: 0.75rem; border-radius: 6px; display: inline-flex; align-items: center; gap: 0.3rem; background: var(--success); border-color: var(--success); color: white; cursor: pointer; font-weight: 600; margin-top: 0; line-height: 1;"><i class="fa-solid fa-check-double"></i> Solve</button>
+                       <button class="btn btn-danger delete-tracker-btn" data-id="${record.id}" style="padding: 0.35rem 0.6rem; font-size: 0.75rem; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; margin-top: 0; line-height: 1;"><i class="fa-solid fa-trash-can"></i></button>
+                   </div>`;
+
+            tr.innerHTML = `
+                <td style="padding: 0.75rem; vertical-align: middle;">${sourceBadge}</td>
+                <td style="padding: 0.75rem; vertical-align: middle;">${detailHtml}</td>
+                <td style="padding: 0.75rem; vertical-align: middle; font-weight: 500; color: var(--text-secondary);">${record.partyOrWh}</td>
+                <td style="padding: 0.75rem; vertical-align: middle; text-align: right; font-weight: 600; color: var(--text-secondary);">${record.rowsCount}</td>
+                <td style="padding: 0.75rem; vertical-align: middle; color: var(--text-secondary);">${addedDateFormatted}</td>
+                <td style="padding: 0.75rem; vertical-align: middle;">${daysText}</td>
+                <td style="padding: 0.75rem; vertical-align: middle; text-align: center;">${statusBadge}</td>
+                <td style="padding: 0.75rem; vertical-align: middle; text-align: center;">${actionHtml}</td>
+            `;
+
+            const solveBtn = tr.querySelector('.solve-tracker-btn');
+            if (solveBtn) {
+                solveBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    solveBtn.disabled = true;
+                    solveBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+                    await solveTrackedError(record.id);
+                    renderErrorTracker();
+                });
+            }
+
+            const deleteBtn = tr.querySelector('.delete-tracker-btn');
+            if (deleteBtn) {
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showCustomConfirm(
+                        "Delete Dispute Record",
+                        `Are you sure you want to delete the tracked error for "${record.fileName}"? This action cannot be undone.`,
+                        async (confirmed) => {
+                            if (confirmed) {
+                                deleteBtn.disabled = true;
+                                deleteBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+                                await deleteTrackedError(record.id);
+                                renderErrorTracker();
+                            }
+                        }
+                    );
+                });
+            }
+
+            tbody.appendChild(tr);
+        });
+
+        container.innerHTML = '';
+        container.appendChild(table);
+    }
+
+    const trackerSearchInput = document.getElementById('trackerSearchInput');
+    const trackerStatusFilter = document.getElementById('trackerStatusFilter');
+    const trackerSourceFilter = document.getElementById('trackerSourceFilter');
+    const clearTrackerDbBtn = document.getElementById('clearTrackerDbBtn');
+
+    if (trackerSearchInput) {
+        trackerSearchInput.addEventListener('input', () => renderErrorTracker());
+    }
+    if (trackerStatusFilter) {
+        trackerStatusFilter.addEventListener('change', () => renderErrorTracker());
+    }
+    if (trackerSourceFilter) {
+        trackerSourceFilter.addEventListener('change', () => renderErrorTracker());
+    }
+    if (clearTrackerDbBtn) {
+        clearTrackerDbBtn.addEventListener('click', () => {
+            showCustomConfirm(
+                "Clear Tracker History",
+                "Are you sure you want to delete all tracked error dispute history? This will wipe all records permanently.",
+                async (confirmed) => {
+                    if (confirmed) {
+                        clearTrackerDbBtn.disabled = true;
+                        clearTrackerDbBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Clearing...';
+                        await clearTrackedErrorsDb();
+                        clearTrackerDbBtn.disabled = false;
+                        clearTrackerDbBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i> Clear History';
+                        renderErrorTracker();
+                    }
+                }
+            );
+        });
+    }
+
+    // Expose functions globally for debugging/console testing
+    window.errorTracker = {
+        fetch: fetchTrackedErrors,
+        register: registerTrackedError,
+        solve: solveTrackedError,
+        delete: deleteTrackedError,
+        clear: clearTrackedErrorsDb,
+        render: renderErrorTracker
+    };
 
 });
