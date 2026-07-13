@@ -406,16 +406,28 @@
                         <div class="card upload-card">
                             <div class="card-header">
                                 <div class="header-icon"><i class="fa-solid fa-folder-open"></i></div>
-                                <h2>Upload Files to Group</h2>
+                                <h2 id="folderHeaderTitle">Upload Files to Group</h2>
                             </div>
-                            <p class="card-desc">Drag & drop your files (including Merged file & prefix renamed files) together.</p>
+                            
+                            <!-- Mode Selector: Group Files vs Process Folders -->
+                            <div class="sub-tab-navigation">
+                                <button class="sub-tab-btn active" id="folderModeFilesBtn" type="button">
+                                    <i class="fa-solid fa-file-excel"></i> Group Files by Prefix
+                                </button>
+                                <button class="sub-tab-btn" id="folderModeFoldersBtn" type="button">
+                                    <i class="fa-solid fa-folder-open"></i> Process Folders Directly
+                                </button>
+                            </div>
+
+                            <p class="card-desc" id="folderUploadDesc" style="margin-top: 0;">Drag & drop your files (including Merged file & prefix renamed files) together.</p>
                             
                             <div class="upload-dropzone" id="folderDropzone">
                                 <input type="file" id="folderFileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                                <input type="file" id="folderFolderInput" webkitdirectory directory multiple class="file-input-hidden">
                                 <div class="dropzone-content">
-                                    <i class="fa-solid fa-folder-plus upload-icon" style="margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
-                                    <h3>Drag & drop your files here</h3>
-                                    <p>or <span class="browse-btn">Browse Files</span></p>
+                                    <i class="fa-solid fa-folder-plus upload-icon" id="folderUploadIcon" style="margin-bottom: 12px; font-size: 2rem; color: var(--primary);"></i>
+                                    <h3 id="folderDropzoneTitle">Drag & drop your files here</h3>
+                                    <p>or <span class="browse-btn" id="folderBrowseBtn">Browse Files</span></p>
                                     <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
                                 </div>
                             </div>

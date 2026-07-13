@@ -713,6 +713,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // ====================================================
     const folderDropzone = document.getElementById('folderDropzone');
     const folderFileInput = document.getElementById('folderFileInput');
+    const folderFolderInput = document.getElementById('folderFolderInput');
+    const folderModeFilesBtn = document.getElementById('folderModeFilesBtn');
+    const folderModeFoldersBtn = document.getElementById('folderModeFoldersBtn');
+    const folderHeaderTitle = document.getElementById('folderHeaderTitle');
+    const folderUploadDesc = document.getElementById('folderUploadDesc');
+    const folderDropzoneTitle = document.getElementById('folderDropzoneTitle');
+    const folderBrowseBtn = document.getElementById('folderBrowseBtn');
+    const folderUploadIcon = document.getElementById('folderUploadIcon');
+    
     const folderFileList = document.getElementById('folderFileList');
     const folderFileListContainer = document.getElementById('folderFileListContainer');
     const folderFileCountSpan = document.getElementById('folderFileCount');
@@ -725,9 +734,136 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let selectedFolderFiles = [];
     let folderZipFilename = 'Grouped_Folders.zip';
+    let folderMode = 'files'; // 'files' or 'folders'
+
+    // Initialize folder input display as hidden by default
+    if (folderFolderInput) folderFolderInput.style.display = 'none';
 
     function checkIsMergedFile(file) {
         return file.name.toUpperCase().includes('FLIPKART_MERGED_ORDERS');
+    }
+
+    // Helper to recursively traverse dragged folders and get files
+    async function getFilesFromDataTransfer(dataTransfer) {
+        const files = [];
+        
+        const readDirectory = (dirEntry) => {
+            return new Promise((resolve) => {
+                const reader = dirEntry.createReader();
+                const allEntries = [];
+                
+                const readEntries = () => {
+                    reader.readEntries((entries) => {
+                        if (entries.length === 0) {
+                            resolve(allEntries);
+                        } else {
+                            allEntries.push(...entries);
+                            readEntries();
+                        }
+                    }, () => resolve([]));
+                };
+                readEntries();
+            });
+        };
+        
+        const getFile = (fileEntry) => {
+            return new Promise((resolve) => {
+                fileEntry.file((file) => resolve(file), () => resolve(null));
+            });
+        };
+        
+        const traverse = async (entry, path = "") => {
+            if (entry.isFile) {
+                const file = await getFile(entry);
+                if (file) {
+                    file.customRelativePath = path ? `${path}/${file.name}` : file.name;
+                    files.push(file);
+                }
+            } else if (entry.isDirectory) {
+                const entries = await readDirectory(entry);
+                const nextPath = path ? `${path}/${entry.name}` : entry.name;
+                for (const subEntry of entries) {
+                    await traverse(subEntry, nextPath);
+                }
+            }
+        };
+        
+        const items = dataTransfer.items;
+        const entries = [];
+        
+        if (items) {
+            for (let i = 0; i < items.length; i++) {
+                try {
+                    const entry = items[i].webkitGetAsEntry();
+                    if (entry) {
+                        entries.push(entry);
+                    }
+                } catch (err) {
+                    console.warn(err);
+                }
+            }
+        }
+        
+        if (entries.length > 0) {
+            for (const entry of entries) {
+                await traverse(entry);
+            }
+        } else {
+            const list = Array.from(dataTransfer.files);
+            list.forEach(file => {
+                file.customRelativePath = file.webkitRelativePath || file.name;
+                files.push(file);
+            });
+        }
+        return files;
+    }
+
+    function switchFolderMode(mode) {
+        if (folderMode === mode) return;
+        folderMode = mode;
+        
+        selectedFolderFiles = [];
+        if (folderFileInput) folderFileInput.value = '';
+        if (folderFolderInput) folderFolderInput.value = '';
+        
+        if (folderFileListContainer) folderFileListContainer.style.display = 'none';
+        if (folderResultCard) folderResultCard.style.display = 'none';
+        
+        if (mode === 'files') {
+            if (folderFileInput) folderFileInput.style.display = 'block';
+            if (folderFolderInput) folderFolderInput.style.display = 'none';
+            if (folderModeFilesBtn) folderModeFilesBtn.classList.add('active');
+            if (folderModeFoldersBtn) folderModeFoldersBtn.classList.remove('active');
+            if (folderHeaderTitle) folderHeaderTitle.innerText = "Upload Files to Group";
+            if (folderUploadDesc) folderUploadDesc.innerText = "Drag & drop your files (including Merged file & prefix renamed files) together.";
+            if (folderDropzoneTitle) folderDropzoneTitle.innerText = "Drag & drop your files here";
+            if (folderBrowseBtn) folderBrowseBtn.innerText = "Browse Files";
+            if (folderUploadIcon) {
+                folderUploadIcon.className = "fa-solid fa-folder-plus upload-icon";
+                folderUploadIcon.style.color = "var(--primary)";
+            }
+        } else {
+            if (folderFileInput) folderFileInput.style.display = 'none';
+            if (folderFolderInput) folderFolderInput.style.display = 'block';
+            if (folderModeFilesBtn) folderModeFilesBtn.classList.remove('active');
+            if (folderModeFoldersBtn) folderModeFoldersBtn.classList.add('active');
+            if (folderHeaderTitle) folderHeaderTitle.innerText = "Upload Folders Directly";
+            if (folderUploadDesc) folderUploadDesc.innerText = "Drag & drop your grouped folders here to verify and package.";
+            if (folderDropzoneTitle) folderDropzoneTitle.innerText = "Drag & drop your folders here";
+            if (folderBrowseBtn) folderBrowseBtn.innerText = "Browse Folders";
+            if (folderUploadIcon) {
+                folderUploadIcon.className = "fa-solid fa-folder-open upload-icon";
+                folderUploadIcon.style.color = "var(--success)";
+            }
+        }
+        updateFolderFilesListUI();
+    }
+
+    if (folderModeFilesBtn) {
+        folderModeFilesBtn.addEventListener('click', () => switchFolderMode('files'));
+    }
+    if (folderModeFoldersBtn) {
+        folderModeFoldersBtn.addEventListener('click', () => switchFolderMode('folders'));
     }
 
     if (folderDropzone) {
@@ -747,18 +883,48 @@ document.addEventListener('DOMContentLoaded', () => {
             }, false);
         });
 
-        folderDropzone.addEventListener('click', () => {
-            if (folderFileInput) folderFileInput.click();
+        folderDropzone.addEventListener('click', (e) => {
+            if (e.target === folderFileInput || e.target === folderFolderInput) return;
+            if (folderMode === 'files') {
+                if (folderFileInput) folderFileInput.click();
+            } else {
+                if (folderFolderInput) folderFolderInput.click();
+            }
         });
         
-        folderDropzone.addEventListener('drop', (e) => {
-            handleFolderFilesSelection(e.dataTransfer.files);
+        folderDropzone.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            folderDropzone.classList.remove('dragover');
+            
+            let files = [];
+            if (folderMode === 'files') {
+                if (e.dataTransfer.files.length > 0) {
+                    files = Array.from(e.dataTransfer.files);
+                }
+            } else {
+                files = await getFilesFromDataTransfer(e.dataTransfer);
+            }
+            
+            if (files.length > 0) {
+                handleFolderFilesSelection(files);
+            }
         });
     }
 
     if (folderFileInput) {
         folderFileInput.addEventListener('change', (e) => {
-            handleFolderFilesSelection(e.target.files);
+            if (e.target.files.length > 0) {
+                handleFolderFilesSelection(Array.from(e.target.files));
+            }
+        });
+    }
+
+    if (folderFolderInput) {
+        folderFolderInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFolderFilesSelection(Array.from(e.target.files));
+            }
         });
     }
 
@@ -766,14 +932,41 @@ document.addEventListener('DOMContentLoaded', () => {
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             const ext = file.name.split('.').pop().toLowerCase();
+            const isSystemFile = file.name.startsWith('.') || file.name.startsWith('~') || file.name === "Thumbs.db";
             
             if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
                 alert(`File "${file.name}" is not supported (supports Excel/CSV) and was skipped.`);
                 continue;
             }
+            if (isSystemFile) {
+                continue;
+            }
 
-            const isDuplicate = selectedFolderFiles.some(f => f.name === file.name && f.size === file.size);
-            if (!isDuplicate) selectedFolderFiles.push(file);
+            if (folderMode === 'files') {
+                const isDuplicate = selectedFolderFiles.some(f => f.name === file.name && f.size === file.size);
+                if (!isDuplicate) {
+                    file.customRelativePath = file.name;
+                    selectedFolderFiles.push(file);
+                }
+            } else {
+                const relativePath = file.customRelativePath || file.webkitRelativePath || file.name;
+                const normalizedPath = relativePath.replace(/\\/g, '/');
+                const pathParts = normalizedPath.split('/');
+                
+                if (pathParts.length > 1) {
+                    const folderName = pathParts[pathParts.length - 2];
+                    const cleanRelativePath = `${folderName}/${file.name}`;
+                    
+                    const isDuplicate = selectedFolderFiles.some(f => f.customRelativePath === cleanRelativePath && f.size === file.size);
+                    if (!isDuplicate) {
+                        file.customRelativePath = cleanRelativePath;
+                        file.folderName = folderName;
+                        selectedFolderFiles.push(file);
+                    }
+                } else {
+                    alert(`File "${file.name}" was skipped because it is not inside an uploaded folder.`);
+                }
+            }
         }
         updateFolderFilesListUI();
     }
@@ -790,17 +983,29 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         selectedFolderFiles.forEach((file, index) => {
-            const isMerged = checkIsMergedFile(file);
-            const tagClass = isMerged ? 'tag-mapping' : 'tag-rename'; // Green tag for merged, Blue for prefix
-            const tagText = isMerged ? 'Merged File' : 'Prefix File';
+            let isMerged = false;
+            let tagText = 'Prefix File';
+            let tagClass = 'tag-rename';
+
+            if (folderMode === 'files') {
+                isMerged = checkIsMergedFile(file);
+                tagClass = isMerged ? 'tag-mapping' : 'tag-rename';
+                tagText = isMerged ? 'Merged File' : 'Prefix File';
+            } else {
+                isMerged = checkIsMergedFile(file);
+                tagClass = isMerged ? 'tag-mapping' : 'tag-rename';
+                tagText = isMerged ? `Folder: ${file.folderName} (Merged)` : `Folder: ${file.folderName}`;
+            }
+
+            const displayName = file.customRelativePath || file.name;
 
             const li = document.createElement('li');
             li.innerHTML = `
                 <div class="file-info">
                     <i class="fa-regular fa-file-excel"></i>
                     <div>
-                        <div class="file-name" title="${file.name}">
-                            ${file.name} 
+                        <div class="file-name" title="${displayName}">
+                            ${displayName} 
                             <span class="file-tag ${tagClass}">${tagText}</span>
                         </div>
                         <span class="file-size">${formatBytes(file.size)}</span>
@@ -825,6 +1030,7 @@ document.addEventListener('DOMContentLoaded', () => {
             selectedFolderFiles = [];
             updateFolderFilesListUI();
             if (folderFileInput) folderFileInput.value = '';
+            if (folderFolderInput) folderFolderInput.value = '';
         });
     }
 
@@ -832,24 +1038,41 @@ document.addEventListener('DOMContentLoaded', () => {
         folderProcessBtn.addEventListener('click', async () => {
             if (selectedFolderFiles.length === 0) return;
 
-            // Check validation: at least 1 merged file and at least 1 other file
-            const mergedFiles = selectedFolderFiles.filter(checkIsMergedFile);
-            const otherFiles = selectedFolderFiles.filter(f => !checkIsMergedFile(f));
+            if (folderMode === 'files') {
+                // Check validation: at least 1 merged file and at least 1 other file
+                const mergedFiles = selectedFolderFiles.filter(checkIsMergedFile);
+                const otherFiles = selectedFolderFiles.filter(f => !checkIsMergedFile(f));
 
-            if (mergedFiles.length !== 1) {
-                alert(`Error: Exactly one file containing "FLIPKART_MERGED_ORDERS" in its name must be selected (you selected ${mergedFiles.length}).`);
-                return;
-            }
+                if (mergedFiles.length !== 1) {
+                    alert(`Error: Exactly one file containing "FLIPKART_MERGED_ORDERS" in its name must be selected (you selected ${mergedFiles.length}).`);
+                    return;
+                }
 
-            if (otherFiles.length === 0) {
-                alert(`Error: You must upload at least one other file with a prefix to move into folders.`);
-                return;
+                if (otherFiles.length === 0) {
+                    alert(`Error: You must upload at least one other file with a prefix to move into folders.`);
+                    return;
+                }
+            } else {
+                const allFolders = new Set();
+                selectedFolderFiles.forEach(file => {
+                    if (file.folderName) allFolders.add(file.folderName);
+                });
+
+                if (allFolders.size === 0) {
+                    alert(`Error: No valid folders were detected. Please upload/drop whole folders.`);
+                    return;
+                }
             }
 
             const formData = new FormData();
-            selectedFolderFiles.forEach(file => formData.append('files[]', file));
+            formData.append('mode', folderMode);
+            
+            selectedFolderFiles.forEach(file => {
+                const filepath = file.customRelativePath || file.name;
+                formData.append('files[]', file, filepath);
+            });
 
-            showLoader("Grouping files by prefix and creating ZIP package...");
+            showLoader("Processing folder creation workflow...");
             if (folderResultCard) folderResultCard.style.display = 'none';
 
             try {
@@ -865,7 +1088,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 folderZipFilename = data.zip_filename || 'Grouped_Folders.zip';
                 if (folderSuccessMessage) {
-                    folderSuccessMessage.textContent = `Successfully created ${data.folders_count} prefix folder(s)!`;
+                    folderSuccessMessage.textContent = folderMode === 'files' ? 
+                        `Successfully created ${data.folders_count} prefix folder(s)!` :
+                        `Successfully verified and zipped ${data.folders_count} folder(s)!`;
                 }
 
                 // Populate Log Table
@@ -900,12 +1125,12 @@ document.addEventListener('DOMContentLoaded', () => {
             tdFolder.style.fontWeight = '600';
             
             const tdMerged = document.createElement('td');
-            tdMerged.textContent = log.copied_merged;
-            tdMerged.title = log.copied_merged;
+            tdMerged.textContent = log.copied_merged || "";
+            tdMerged.title = log.copied_merged || "";
             
             const tdMoved = document.createElement('td');
-            tdMoved.textContent = log.moved_files.join(', ');
-            tdMoved.title = log.moved_files.join(', ');
+            tdMoved.textContent = log.moved_files ? log.moved_files.join(', ') : "";
+            tdMoved.title = log.moved_files ? log.moved_files.join(', ') : "";
 
             tr.appendChild(tdFolder);
             tr.appendChild(tdMerged);
