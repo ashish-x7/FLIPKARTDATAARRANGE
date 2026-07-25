@@ -271,11 +271,27 @@ def find_col_key(df, target_names, default_idx):
 def clean_order_item_id(val):
     if pd.isna(val) or val is None:
         return ""
-    val_str = str(val).strip()
+    val_str = str(val).replace('`', '').replace('"', '').strip()
+    if not val_str:
+        return ""
     # Remove "OI:" or "oi:" prefix case-insensitively
     if val_str.upper().startswith("OI:"):
-        val_str = val_str[3:]
-    return val_str.strip()
+        val_str = val_str[3:].strip()
+    # Handle scientific notation and float representation (e.g., ends in .0)
+    if '.' in val_str or 'e+' in val_str.lower() or 'e-' in val_str.lower():
+        try:
+            f_val = float(val_str)
+            if f_val.is_integer():
+                return str(int(f_val))
+            else:
+                s_val = str(f_val)
+                if s_val.endswith('.0'):
+                    s_val = s_val[:-2]
+                return s_val
+        except ValueError:
+            pass
+    return val_str
+
 
 def clean_quotes(val):
     if pd.isna(val) or val is None:
@@ -1322,7 +1338,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     for r in range(2, ws_dt.max_row + 1):
         val = ws_dt.cell(row=r, column=5).value
         if val:
-            val_clean = str(val).replace('`', '').replace('"', '').strip()
+            val_clean = clean_order_item_id(val)
             if val_clean:
                 suborders_in_dt.add(val_clean)
                 
@@ -1346,7 +1362,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     for r in range(2, ws_od.max_row + 1):
         val = ws_od.cell(row=r, column=1).value
         if val:
-            val_clean = str(val).replace('`', '').replace('"', '').strip()
+            val_clean = clean_order_item_id(val)
             if val_clean in suborders_in_dt:
                 matched_od_count += 1
                 row_vals = [cell.value for cell in ws_od[r]]
@@ -1470,8 +1486,8 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         'CHHATTISGARH': 'CG', 'GOA': 'GA', 'GUJARAT': 'GJ', 'HARYANA': 'HR',
         'HIMACHAL PRADESH': 'HP', 'JHARKHAND': 'JH', 'KARNATAKA': 'KA', 'KERALA': 'KL',
         'MADHYA PRADESH': 'MP', 'MAHARASHTRA': 'MH', 'MANIPUR': 'MN', 'MEGHALAYA': 'ML',
-        'MIZORAM': 'MZ', 'NAGALAND': 'NL', 'ODISHA': 'OD', 'ORISSA': 'OD', 'PUNJAB': 'PB',
-        'RAJASTHAN': 'RJ', 'SIKKIM': 'SK', 'TAMIL NADU': 'TN', 'TELANGANA': 'TG',
+        'MIZORAM': 'MZ', 'NAGALAND': 'NL', 'ODISHA': 'OR', 'ORISSA': 'OR', 'PUNJAB': 'PB',
+        'RAJASTHAN': 'RJ', 'SIKKIM': 'SK', 'TAMIL NADU': 'TN', 'TELANGANA': 'TS',
         'TRIPURA': 'TR', 'UTTAR PRADESH': 'UP', 'UTTARAKHAND': 'UK', 'UTTARANCHAL': 'UK',
         'WEST BENGAL': 'WB', 'ANDAMAN AND NICOBAR ISLANDS': 'AN', 'CHANDIGARH': 'CH',
         'DADRA AND NAGAR HAVELI': 'DN', 'DAMAN AND DIU': 'DD', 'DELHI': 'DL',
@@ -1489,7 +1505,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         "Order ID", "Invoice ID", "New Invoice ID", "Invoice Reference Number (IRN)",
         "Shipment date", "Invoice date", "GST ID", "FSN CODE", "SKU", "Item Title",
         "Quantity", "Item Cost", "GST Rate", "CESS Rate", "HSN", "Warehouse Code/Name",
-        "Status", "state code", "Promotion Discount(Excluding Tax)"
+        "Promotion Discount(Excluding Tax)", "state code", "Status"
     ]
     ws_pr.append(pr_headers)
 
@@ -1498,7 +1514,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     for r_od in range(2, ws_od.max_row + 1):
         item_id = ws_od.cell(row=r_od, column=1).value
         if item_id:
-            clean_item_id = str(item_id).replace('`', '').replace('"', '').strip()
+            clean_item_id = clean_order_item_id(item_id)
             fsn_val = ws_od.cell(row=r_od, column=9).value
             sku_val = ws_od.cell(row=r_od, column=8).value
             title_val = ws_od.cell(row=r_od, column=10).value
@@ -1508,7 +1524,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     pr_row = 2
     for r_dt in range(2, ws_dt.max_row + 1):
         order_id_raw = ws_dt.cell(row=r_dt, column=5).value
-        invoice_id_raw = ws_dt.cell(row=r_dt, column=4).value
+        invoice_id_raw = ws_dt.cell(row=r_dt, column=8).value
         new_invoice_id_raw = ws_dt.cell(row=r_dt, column=7).value
         shipment_date_raw = ws_dt.cell(row=r_dt, column=12).value
         invoice_date_raw = ws_dt.cell(row=r_dt, column=13).value
@@ -1553,12 +1569,13 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         ws_pr.cell(row=pr_row, column=13, value=gst_rate_formatted)
         ws_pr.cell(row=pr_row, column=15, value=hsn_raw)
         ws_pr.cell(row=pr_row, column=16, value=wh_raw)
+        ws_pr.cell(row=pr_row, column=17, value=promotion_discount_raw)
         ws_pr.cell(row=pr_row, column=18, value=state_code_formatted)
-        ws_pr.cell(row=pr_row, column=19, value=promotion_discount_raw)
+        ws_pr.cell(row=pr_row, column=19, value="")
         
         # Lookup OD details
         if order_id_raw:
-            clean_order_id = str(order_id_raw).replace('`', '').replace('"', '').strip()
+            clean_order_id = clean_order_item_id(order_id_raw)
             if clean_order_id in od_lookup:
                 sku_id_val, sku_val, title_val = od_lookup[clean_order_id]
                 ws_pr.cell(row=pr_row, column=8, value=sku_id_val)
@@ -1866,7 +1883,7 @@ def invoice_arrange():
                     
         shutil.rmtree(temp_work_dir, ignore_errors=True)
         
-        zip_display_name = "flipkart_data_arrange_bundle.zip"
+        # zip_display_name = "flipkart_data_arrange_bundle.zip"
         
         return jsonify({
             'message': 'Invoice Arrange workflow completed successfully!',
