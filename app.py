@@ -271,11 +271,27 @@ def find_col_key(df, target_names, default_idx):
 def clean_order_item_id(val):
     if pd.isna(val) or val is None:
         return ""
-    val_str = str(val).strip()
+    val_str = str(val).replace('`', '').replace('"', '').strip()
+    if not val_str:
+        return ""
     # Remove "OI:" or "oi:" prefix case-insensitively
     if val_str.upper().startswith("OI:"):
-        val_str = val_str[3:]
-    return val_str.strip()
+        val_str = val_str[3:].strip()
+    # Handle scientific notation and float representation (e.g., ends in .0)
+    if '.' in val_str or 'e+' in val_str.lower() or 'e-' in val_str.lower():
+        try:
+            f_val = float(val_str)
+            if f_val.is_integer():
+                return str(int(f_val))
+            else:
+                s_val = str(f_val)
+                if s_val.endswith('.0'):
+                    s_val = s_val[:-2]
+                return s_val
+        except ValueError:
+            pass
+    return val_str
+
 
 def clean_quotes(val):
     if pd.isna(val) or val is None:
@@ -1057,30 +1073,12 @@ def create_folder():
             return jsonify({'error': 'No files uploaded'}), 400
             
         uploaded_files = request.files.getlist('files[]')
-        if not uploaded_files or len(uploaded_files) < 2:
-            return jsonify({'error': 'Please upload at least 2 files (merged file + other files)'}), 400
+        if not uploaded_files or len(uploaded_files) < 1:
+            return jsonify({'error': 'No files uploaded'}), 400
             
+        mode = request.form.get('mode', 'files')
+        
         from werkzeug.utils import secure_filename
-        
-        # Classify files
-        merged_file = None
-        other_files = []
-        
-        for file in uploaded_files:
-            if not file.filename:
-                continue
-            if 'FLIPKART_MERGED_ORDERS' in file.filename.upper():
-                merged_file = file
-            else:
-                other_files.append(file)
-                
-        if not merged_file:
-            return jsonify({'error': 'No file containing "FLIPKART_MERGED_ORDERS" in its name was found.'}), 400
-            
-        if not other_files:
-            return jsonify({'error': 'No other prefix files were found.'}), 400
-            
-        # We will work in a temporary folder
         import shutil
         import tempfile
         
@@ -1088,78 +1086,206 @@ def create_folder():
         os.makedirs('temp', exist_ok=True)
         temp_work_dir = tempfile.mkdtemp(dir='temp')
         
-        # Save merged file bytes to reuse
-        merged_bytes = merged_file.read()
-        merged_filename = secure_filename(merged_file.filename)
-        
-        # Map to track operations
-        # prefix -> list of other filenames
-        prefix_groups = {}
-        
-        for file in other_files:
-            filename = file.filename
-            # Extract prefix before the first '-'
-            if '-' in filename:
-                prefix = filename.split('-', 1)[0].strip()
-                if prefix:
-                    if prefix not in prefix_groups:
-                        prefix_groups[prefix] = []
-                    
-                    # Create folder for prefix if it doesn't exist
-                    dest_folder_path = os.path.join(temp_work_dir, prefix)
-                    os.makedirs(dest_folder_path, exist_ok=True)
-                    
-                    # Copy merged file
-                    merged_dest_path = os.path.join(dest_folder_path, merged_filename)
-                    if not os.path.exists(merged_dest_path):
-                        with open(merged_dest_path, 'wb') as f_out:
-                            f_out.write(merged_bytes)
-                            
-                    # Save the other file directly
-                    other_dest_path = os.path.join(dest_folder_path, secure_filename(filename))
-                    # Reset pointer just in case and save bytes
-                    file.seek(0)
-                    with open(other_dest_path, 'wb') as f_other:
-                        f_other.write(file.read())
-                    
-                    prefix_groups[prefix].append(filename)
-                    
-        if not prefix_groups:
-            # Clean up and return error
-            shutil.rmtree(temp_work_dir, ignore_errors=True)
-            return jsonify({'error': 'No files with valid prefix (e.g. "101-") found to group.'}), 400
-            
-        # Sort prefixes numerically if numeric, else alphabetically
-        numeric_prefixes = []
-        alpha_prefixes = []
-        for p in prefix_groups.keys():
-            if p.isdigit():
-                numeric_prefixes.append(int(p))
-            else:
-                alpha_prefixes.append(p)
-                
-        numeric_prefixes.sort()
-        alpha_prefixes.sort(key=str.upper)
-        
-        sorted_prefixes = [str(n) for n in numeric_prefixes] + alpha_prefixes
-        
-        # ZIP filename pattern: firstPrefix-lastPrefix.zip
-        first_p = sorted_prefixes[0]
-        last_p = sorted_prefixes[-1]
-        zip_filename = f"{first_p}-{last_p}.zip"
-        
-        # Check if any folder does not have exactly 3 files
         error_records = []
-        for p, group_files in prefix_groups.items():
-            total_files = len(group_files) + 1
-            if total_files != 3:
-                error_records.append({
+        log_entries = []
+        sorted_prefixes = []
+        
+        if mode == 'files':
+            if len(uploaded_files) < 2:
+                shutil.rmtree(temp_work_dir, ignore_errors=True)
+                return jsonify({'error': 'Please upload at least 2 files (merged file + other files)'}), 400
+                
+            # Classify files
+            merged_file = None
+            other_files = []
+            
+            for file in uploaded_files:
+                if not file.filename:
+                    continue
+                if 'FLIPKART_MERGED_ORDERS' in file.filename.upper():
+                    merged_file = file
+                else:
+                    other_files.append(file)
+                    
+            if not merged_file:
+                shutil.rmtree(temp_work_dir, ignore_errors=True)
+                return jsonify({'error': 'No file containing "FLIPKART_MERGED_ORDERS" in its name was found.'}), 400
+                
+            if not other_files:
+                shutil.rmtree(temp_work_dir, ignore_errors=True)
+                return jsonify({'error': 'No other prefix files were found.'}), 400
+                
+            # Save merged file bytes to reuse
+            merged_bytes = merged_file.read()
+            merged_filename = secure_filename(merged_file.filename)
+            
+            # Map to track operations
+            prefix_groups = {}
+            
+            for file in other_files:
+                filename = file.filename
+                # Extract prefix before the first '-'
+                if '-' in filename:
+                    prefix = filename.split('-', 1)[0].strip()
+                    if prefix:
+                        if prefix not in prefix_groups:
+                            prefix_groups[prefix] = []
+                        
+                        # Create folder for prefix if it doesn't exist
+                        dest_folder_path = os.path.join(temp_work_dir, prefix)
+                        os.makedirs(dest_folder_path, exist_ok=True)
+                        
+                        # Copy merged file
+                        merged_dest_path = os.path.join(dest_folder_path, merged_filename)
+                        if not os.path.exists(merged_dest_path):
+                            with open(merged_dest_path, 'wb') as f_out:
+                                f_out.write(merged_bytes)
+                                
+                        # Save the other file directly
+                        other_dest_path = os.path.join(dest_folder_path, secure_filename(filename))
+                        file.seek(0)
+                        with open(other_dest_path, 'wb') as f_other:
+                            f_other.write(file.read())
+                        
+                        prefix_groups[prefix].append(filename)
+                        
+            if not prefix_groups:
+                shutil.rmtree(temp_work_dir, ignore_errors=True)
+                return jsonify({'error': 'No files with valid prefix (e.g. "101-") found to group.'}), 400
+                
+            numeric_prefixes = []
+            alpha_prefixes = []
+            for p in prefix_groups.keys():
+                if p.isdigit():
+                    numeric_prefixes.append(int(p))
+                else:
+                    alpha_prefixes.append(p)
+                    
+            numeric_prefixes.sort()
+            alpha_prefixes.sort(key=str.upper)
+            
+            sorted_prefixes = [str(n) for n in numeric_prefixes] + alpha_prefixes
+            
+            # Check if any folder does not have exactly 3 files
+            for p in sorted_prefixes:
+                group_files = prefix_groups[p]
+                total_files = len(group_files) + 1
+                if total_files != 3:
+                    error_records.append({
+                        'folder': p,
+                        'count': total_files,
+                        'files': ", ".join(group_files + [merged_filename]),
+                        'status': f"Error: Expected 3 files, found {total_files}"
+                    })
+                    
+            # Prepare response logs
+            for p in sorted_prefixes:
+                log_entries.append({
                     'folder': p,
-                    'count': total_files,
-                    'files': ", ".join(group_files + [merged_filename]),
-                    'status': f"Error: Expected 3 files, found {total_files}"
+                    'copied_merged': merged_filename,
+                    'moved_files': prefix_groups[p]
                 })
                 
+        else: # mode == 'folders'
+            # Group files by their folderName extracted from relative path
+            folder_groups = {}
+            
+            for file in uploaded_files:
+                if not file.filename:
+                    continue
+                    
+                # Extract folder and file name from the relative path
+                normalized_path = file.filename.replace('\\', '/')
+                parts = normalized_path.split('/')
+                if len(parts) > 1:
+                    folder_name = parts[-2].strip()
+                    file_basename = parts[-1].strip()
+                else:
+                    # Ignore root level files in folders mode
+                    continue
+                    
+                if not folder_name or not file_basename:
+                    continue
+                    
+                safe_folder = secure_filename(folder_name)
+                safe_file_basename = secure_filename(file_basename)
+                
+                if not safe_folder:
+                    continue
+                    
+                # Create destination directory
+                dest_folder_path = os.path.join(temp_work_dir, safe_folder)
+                os.makedirs(dest_folder_path, exist_ok=True)
+                
+                # Write file content
+                dest_filepath = os.path.join(dest_folder_path, safe_file_basename)
+                file.seek(0)
+                with open(dest_filepath, 'wb') as f_out:
+                    f_out.write(file.read())
+                    
+                if safe_folder not in folder_groups:
+                    folder_groups[safe_folder] = {
+                        'merged_file': None,
+                        'other_files': []
+                    }
+                    
+                if 'FLIPKART_MERGED_ORDERS' in safe_file_basename.upper():
+                    folder_groups[safe_folder]['merged_file'] = safe_file_basename
+                else:
+                    folder_groups[safe_folder]['other_files'].append(safe_file_basename)
+                    
+            if not folder_groups:
+                shutil.rmtree(temp_work_dir, ignore_errors=True)
+                return jsonify({'error': 'No files in valid subfolders were uploaded.'}), 400
+                
+            # Sort folders
+            numeric_folders = []
+            alpha_folders = []
+            for f in folder_groups.keys():
+                if f.isdigit():
+                    numeric_folders.append(int(f))
+                else:
+                    alpha_folders.append(f)
+                    
+            numeric_folders.sort()
+            alpha_folders.sort(key=str.upper)
+            sorted_prefixes = [str(n) for n in numeric_folders] + alpha_folders
+            
+            # Check validation for folders mode
+            for folder in sorted_prefixes:
+                group = folder_groups[folder]
+                merged = group['merged_file']
+                others = group['other_files']
+                total_files = (1 if merged else 0) + len(others)
+                
+                if total_files != 3:
+                    status_msg = ""
+                    if not merged:
+                        status_msg += "Missing Merged Orders. "
+                    if len(others) != 2:
+                        status_msg += f"Expected 2 prefix files, found {len(others)}. "
+                        
+                    error_records.append({
+                        'folder': folder,
+                        'count': total_files,
+                        'files': ", ".join(others + ([merged] if merged else [])),
+                        'status': f"Error: {status_msg.strip()}"
+                    })
+                    
+            # Prepare response logs
+            for folder in sorted_prefixes:
+                group = folder_groups[folder]
+                log_entries.append({
+                    'folder': folder,
+                    'copied_merged': group['merged_file'] or "Missing Merged Orders",
+                    'moved_files': group['other_files']
+                })
+                
+        # Generate ZIP file name
+        first_p = sorted_prefixes[0]
+        last_p = sorted_prefixes[-1]
+        zip_filename = f"{first_p}-{last_p}.zip" if first_p != last_p else f"{first_p}.zip"
+        
         has_folder_errors = len(error_records) > 0
         if has_folder_errors:
             from openpyxl.styles import Font
@@ -1208,21 +1334,12 @@ def create_folder():
                         
             if has_folder_errors:
                 z.write(os.path.join(temp_work_dir, "Folder_Errors.xlsx"), "Folder_Errors.xlsx")
-                        
+                
         # Clean up temp folder
         shutil.rmtree(temp_work_dir, ignore_errors=True)
         
-        # Prepare response logs
-        log_entries = []
-        for p in sorted_prefixes:
-            log_entries.append({
-                'folder': p,
-                'copied_merged': merged_filename,
-                'moved_files': prefix_groups[p]
-            })
-            
         return jsonify({
-            'message': 'Folders created and zipped successfully!',
+            'message': 'Folders created/processed successfully!',
             'folders_count': len(sorted_prefixes),
             'zip_filename': zip_filename,
             'log': log_entries
@@ -1339,7 +1456,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     for r in range(2, ws_dt.max_row + 1):
         val = ws_dt.cell(row=r, column=5).value
         if val:
-            val_clean = str(val).replace('`', '').replace('"', '').strip()
+            val_clean = clean_order_item_id(val)
             if val_clean:
                 suborders_in_dt.add(val_clean)
                 
@@ -1363,7 +1480,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     for r in range(2, ws_od.max_row + 1):
         val = ws_od.cell(row=r, column=1).value
         if val:
-            val_clean = str(val).replace('`', '').replace('"', '').strip()
+            val_clean = clean_order_item_id(val)
             if val_clean in suborders_in_dt:
                 matched_od_count += 1
                 row_vals = [cell.value for cell in ws_od[r]]
@@ -1487,8 +1604,8 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         'CHHATTISGARH': 'CG', 'GOA': 'GA', 'GUJARAT': 'GJ', 'HARYANA': 'HR',
         'HIMACHAL PRADESH': 'HP', 'JHARKHAND': 'JH', 'KARNATAKA': 'KA', 'KERALA': 'KL',
         'MADHYA PRADESH': 'MP', 'MAHARASHTRA': 'MH', 'MANIPUR': 'MN', 'MEGHALAYA': 'ML',
-        'MIZORAM': 'MZ', 'NAGALAND': 'NL', 'ODISHA': 'OD', 'ORISSA': 'OD', 'PUNJAB': 'PB',
-        'RAJASTHAN': 'RJ', 'SIKKIM': 'SK', 'TAMIL NADU': 'TN', 'TELANGANA': 'TG',
+        'MIZORAM': 'MZ', 'NAGALAND': 'NL', 'ODISHA': 'OR', 'ORISSA': 'OR', 'PUNJAB': 'PB',
+        'RAJASTHAN': 'RJ', 'SIKKIM': 'SK', 'TAMIL NADU': 'TN', 'TELANGANA': 'TS',
         'TRIPURA': 'TR', 'UTTAR PRADESH': 'UP', 'UTTARAKHAND': 'UK', 'UTTARANCHAL': 'UK',
         'WEST BENGAL': 'WB', 'ANDAMAN AND NICOBAR ISLANDS': 'AN', 'CHANDIGARH': 'CH',
         'DADRA AND NAGAR HAVELI': 'DN', 'DAMAN AND DIU': 'DD', 'DELHI': 'DL',
@@ -1506,7 +1623,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         "Order ID", "Invoice ID", "New Invoice ID", "Invoice Reference Number (IRN)",
         "Shipment date", "Invoice date", "GST ID", "FSN CODE", "SKU", "Item Title",
         "Quantity", "Item Cost", "GST Rate", "CESS Rate", "HSN", "Warehouse Code/Name",
-        "Status", "state code", "Promotion Discount(Excluding Tax)"
+        "Promotion Discount(Excluding Tax)", "state code", "Status"
     ]
     ws_pr.append(pr_headers)
 
@@ -1515,7 +1632,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     for r_od in range(2, ws_od.max_row + 1):
         item_id = ws_od.cell(row=r_od, column=1).value
         if item_id:
-            clean_item_id = str(item_id).replace('`', '').replace('"', '').strip()
+            clean_item_id = clean_order_item_id(item_id)
             fsn_val = ws_od.cell(row=r_od, column=9).value
             sku_val = ws_od.cell(row=r_od, column=8).value
             title_val = ws_od.cell(row=r_od, column=10).value
@@ -1525,7 +1642,7 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     pr_row = 2
     for r_dt in range(2, ws_dt.max_row + 1):
         order_id_raw = ws_dt.cell(row=r_dt, column=5).value
-        invoice_id_raw = ws_dt.cell(row=r_dt, column=4).value
+        invoice_id_raw = ws_dt.cell(row=r_dt, column=8).value
         new_invoice_id_raw = ws_dt.cell(row=r_dt, column=7).value
         shipment_date_raw = ws_dt.cell(row=r_dt, column=12).value
         invoice_date_raw = ws_dt.cell(row=r_dt, column=13).value
@@ -1570,12 +1687,13 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         ws_pr.cell(row=pr_row, column=13, value=gst_rate_formatted)
         ws_pr.cell(row=pr_row, column=15, value=hsn_raw)
         ws_pr.cell(row=pr_row, column=16, value=wh_raw)
+        ws_pr.cell(row=pr_row, column=17, value=promotion_discount_raw)
         ws_pr.cell(row=pr_row, column=18, value=state_code_formatted)
-        ws_pr.cell(row=pr_row, column=19, value=promotion_discount_raw)
+        ws_pr.cell(row=pr_row, column=19, value="")
         
         # Lookup OD details
         if order_id_raw:
-            clean_order_id = str(order_id_raw).replace('`', '').replace('"', '').strip()
+            clean_order_id = clean_order_item_id(order_id_raw)
             if clean_order_id in od_lookup:
                 sku_id_val, sku_val, title_val = od_lookup[clean_order_id]
                 ws_pr.cell(row=pr_row, column=8, value=sku_id_val)
@@ -1883,7 +2001,7 @@ def invoice_arrange():
                     
         shutil.rmtree(temp_work_dir, ignore_errors=True)
         
-        zip_display_name = "flipkart_data_arrange_bundle.zip"
+        # zip_display_name = "flipkart_data_arrange_bundle.zip"
         
         return jsonify({
             'message': 'Invoice Arrange workflow completed successfully!',
