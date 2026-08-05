@@ -140,18 +140,116 @@ document.addEventListener('DOMContentLoaded', () => {
         }, false);
     });
 
-    dropzone.addEventListener('click', () => fileInput.click());
+    dropzone.addEventListener('click', (e) => {
+        if (e.target !== fileInput) {
+            fileInput.click();
+        }
+    });
     dropzone.addEventListener('drop', (e) => handleFilesSelection(e.dataTransfer.files));
     fileInput.addEventListener('change', (e) => handleFilesSelection(e.target.files));
 
-    function handleFilesSelection(files) {
+    function showLoader(text) {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const loadingText = document.getElementById('loadingText');
+        if (loadingText && text) loadingText.textContent = text;
+        if (loadingOverlay) loadingOverlay.style.display = 'flex';
+    }
+
+    function hideLoader() {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const progressContainerGlobal = document.getElementById('progressContainerGlobal');
+        if (loadingOverlay) loadingOverlay.style.display = 'none';
+        if (progressContainerGlobal) progressContainerGlobal.style.display = 'none';
+    }
+
+    function showInvalidFileModal(message) {
+        console.log("%c [VALIDATION POPUP TRIGGERED]", "background: red; color: white; font-size: 16px; font-weight: bold;");
+        console.log("Modal message to display:", message);
+        
+        hideLoader();
+
+        if (fileInput) fileInput.value = '';
+        const renameFileInputEl = document.getElementById('renameFileInput');
+        if (renameFileInputEl) renameFileInputEl.value = '';
+
+        const textToShow = message || "Invalid file detected in Rename section. Please upload the correct Orders file.";
+
+        let modalBackdrop = document.getElementById('invalidFileModalBackdrop');
+
+        if (!modalBackdrop) {
+            modalBackdrop = document.createElement('div');
+            modalBackdrop.id = 'invalidFileModalBackdrop';
+            modalBackdrop.className = 'custom-modal-backdrop';
+            document.body.appendChild(modalBackdrop);
+        }
+
+        modalBackdrop.innerHTML = `
+            <div class="custom-modal-card" style="background: #ffffff !important; border-radius: 20px !important; width: 90% !important; max-width: 440px !important; padding: 32px 28px !important; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0,0,0,0.05) !important; text-align: center !important; margin: auto !important; position: relative !important; z-index: 2147483647 !important;">
+                <div style="margin: 0 auto 18px auto; width: 64px; height: 64px; border-radius: 50%; background: #fef3c7; color: #d97706; display: flex; align-items: center; justify-content: center; font-size: 2rem; box-shadow: 0 4px 12px rgba(217, 119, 6, 0.15);">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                </div>
+                <h3 style="margin: 0 0 10px 0; font-size: 1.35rem; font-weight: 800; color: #0f172a; font-family: 'Outfit', sans-serif;">Invalid File Detected</h3>
+                <p style="margin: 0 0 26px 0; font-size: 0.98rem; color: #475569; line-height: 1.6; font-family: 'Outfit', sans-serif; font-weight: 500;">${textToShow}</p>
+                <div style="display: flex; justify-content: center;">
+                    <button id="invalidFileModalOkBtn" style="padding: 12px 46px; font-size: 1rem; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #ffffff; border: none; border-radius: 12px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4); transition: transform 0.15s ease;">OK</button>
+                </div>
+            </div>
+        `;
+
+        modalBackdrop.classList.add('show');
+        modalBackdrop.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important; background: rgba(15, 23, 42, 0.85) !important; backdrop-filter: blur(8px) !important; -webkit-backdrop-filter: blur(8px) !important; z-index: 2147483647 !important; display: flex !important; align-items: center !important; justify-content: center !important; opacity: 1 !important; pointer-events: auto !important;';
+
+        const okBtn = document.getElementById('invalidFileModalOkBtn');
+        if (okBtn) {
+            okBtn.onclick = function(ev) {
+                if (ev) { ev.preventDefault(); ev.stopPropagation(); }
+                console.log("[OK CLICKED] Reloading page...");
+                modalBackdrop.classList.remove('show');
+                modalBackdrop.style.display = 'none';
+                window.location.reload();
+            };
+        }
+    }
+
+    async function handleFilesSelection(files) {
+        console.log("%c [Merge Tab handleFilesSelection]", "background: blue; color: white; font-size: 14px;", files);
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
+            console.log(`Merge tab processing file #${i+1}: ${file.name}`);
             const ext = file.name.split('.').pop().toLowerCase();
             
             if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
-                alert(`File "${file.name}" is not supported (supports Excel/CSV) and was skipped.`);
-                continue;
+                console.warn(`Unsupported file extension: ${ext}`);
+                showInvalidFileModal("Invalid file detected in Rename section. Please upload the correct Orders file.");
+                return;
+            }
+
+            // Validate Help sheet cell A14 via server check
+            showLoader(`Validating file "${file.name}"...`);
+            const formData = new FormData();
+            formData.append('file', file);
+            try {
+                console.log(`Sending POST /api/validate-file for ${file.name}...`);
+                const res = await fetch('/api/validate-file', {
+                    method: 'POST',
+                    body: formData
+                });
+                console.log("Validate API HTTP status:", res.status);
+                let data = {};
+                try { data = await res.json(); } catch(e){ console.error("JSON parse error:", e); }
+                console.log("Validate API response data:", data);
+                hideLoader();
+                if (!res.ok || !data.valid) {
+                    console.warn(`[VALIDATION FAILED] File ${file.name} is invalid! Showing modal...`);
+                    showInvalidFileModal(data.message || "Invalid file detected in Rename section. Please upload the correct Orders file.");
+                    return;
+                }
+                console.log(`[VALIDATION PASSED] File ${file.name} is valid.`);
+            } catch (err) {
+                hideLoader();
+                console.error("[VALIDATION FETCH ERROR]:", err);
+                showInvalidFileModal("Invalid file detected in Rename section. Please upload the correct Orders file.");
+                return;
             }
 
             const isDuplicate = selectedFiles.some(f => f.name === file.name && f.size === file.size);
@@ -215,9 +313,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: formData
             });
 
-            const data = await response.json();
+            let data = {};
+            try { data = await response.json(); } catch(e){}
 
-            if (!response.ok) throw new Error(data.error || 'Server processing error.');
+            if (!response.ok) {
+                showInvalidFileModal(data.message || "Invalid file detected in Rename section. Please upload the correct Orders file.");
+                return;
+            }
 
             hideLoader();
             successMessage.textContent = `Successfully merged ${selectedFiles.length} file(s). Total orders: ${data.total_orders}`;
@@ -229,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             hideLoader();
-            alert(`Error: ${error.message}`);
+            showInvalidFileModal("Invalid file detected in Rename section. Please upload the correct Orders file.");
         }
     });
 
@@ -347,18 +449,36 @@ document.addEventListener('DOMContentLoaded', () => {
         }, false);
     });
 
-    renameDropzone.addEventListener('click', () => renameFileInput.click());
+    renameDropzone.addEventListener('click', (e) => {
+        if (e.target !== renameFileInput) {
+            renameFileInput.click();
+        }
+    });
     renameDropzone.addEventListener('drop', (e) => handleRenameFilesSelection(e.dataTransfer.files));
     renameFileInput.addEventListener('change', (e) => handleRenameFilesSelection(e.target.files));
 
-    function handleRenameFilesSelection(files) {
+    async function handleRenameFilesSelection(files) {
+        console.log("%c [Rename Tab handleRenameFilesSelection]", "background: purple; color: white; font-size: 14px;", files);
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
+            console.log(`Rename tab processing file #${i+1}: ${file.name}`);
             const ext = file.name.split('.').pop().toLowerCase();
             
             if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
-                alert(`File "${file.name}" is not supported. Please select Excel or CSV files.`);
-                continue;
+                console.warn(`Unsupported rename file extension: ${ext}`);
+                showInvalidFileModal("Invalid file detected in Rename section. Please upload the correct taxes file.");
+                return;
+            }
+
+            const isMap = checkIsMappingFile(file);
+            console.log(`Is mapping file check for ${file.name}: ${isMap}`);
+            if (!isMap) {
+                const filenameLower = file.name.toLowerCase();
+                if (!filenameLower.includes('taxreportdata')) {
+                    console.warn(`[RENAME VALIDATION FAILED] File ${file.name} does not contain 'TaxReportData'`);
+                    showInvalidFileModal("Invalid file detected in Rename section. Please upload the correct taxes file.");
+                    return;
+                }
             }
 
             const isDuplicate = selectedRenameFiles.some(f => f.name === file.name && f.size === file.size);
@@ -439,8 +559,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 body: formData
             });
 
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Server processing error.');
+            let data = {};
+            try { data = await response.json(); } catch(e){}
+
+            if (!response.ok) {
+                showInvalidFileModal(data.message || "Invalid file detected in Rename section. Please upload the correct Orders file.");
+                return;
+            }
 
             hideLoader();
 
@@ -483,7 +608,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         } catch (error) {
             hideLoader();
-            alert(`Error during renaming: ${error.message}`);
+            showInvalidFileModal("Invalid file detected in Rename section. Please upload the correct Orders file.");
         }
     });
 

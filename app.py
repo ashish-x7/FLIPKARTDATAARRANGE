@@ -420,6 +420,116 @@ def find_rename_code_option_b_from_bytes(file_bytes, filename):
     return ""
 
 
+def check_help_sheet_a14(file_bytes, filename):
+    filetype = detect_file_type(file_bytes, filename)
+    if is_html_bytes(file_bytes):
+        filetype = 'html'
+        
+    if filetype in ['csv', 'html']:
+        return False
+        
+    help_sheet_name = None
+    cell_a14_val = None
+    
+    try:
+        if filetype == 'xlsx':
+            wb = None
+            try:
+                wb = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+                sheets = wb.sheetnames
+            except Exception:
+                xlsx_bytes = convert_xls_to_xlsx_via_excel(file_bytes, filename)
+                if xlsx_bytes:
+                    wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
+                    sheets = wb.sheetnames
+                else:
+                    sheets = []
+                    
+            if wb:
+                for s in sheets:
+                    if s.strip().lower() == 'help':
+                        help_sheet_name = s
+                        break
+                if help_sheet_name:
+                    ws = wb[help_sheet_name]
+                    cell_a14_val = ws.cell(row=14, column=1).value
+                wb.close()
+                
+        elif filetype == 'xls':
+            try:
+                import xlrd
+                wb = xlrd.open_workbook(file_contents=file_bytes, ignore_workbook_corruption=True)
+                for s in wb.sheet_names():
+                    if s.strip().lower() == 'help':
+                        help_sheet_name = s
+                        break
+                if help_sheet_name:
+                    ws = wb.sheet_by_name(help_sheet_name)
+                    if ws.nrows >= 14 and ws.ncols >= 1:
+                        cell_a14_val = ws.cell_value(13, 0)
+            except Exception:
+                xlsx_bytes = convert_xls_to_xlsx_via_excel(file_bytes, filename)
+                if xlsx_bytes:
+                    wb = load_workbook(io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
+                    for s in wb.sheetnames:
+                        if s.strip().lower() == 'help':
+                            help_sheet_name = s
+                            break
+                    if help_sheet_name:
+                        ws = wb[help_sheet_name]
+                        cell_a14_val = ws.cell(row=14, column=1).value
+                    wb.close()
+    except Exception as e:
+        print(f"[CHECK A14 FAIL] Exception reading {filename}: {e}", flush=True)
+        
+    # Secondary pandas ExcelFile fallback if help_sheet_name or cell_a14_val is missing
+    if not help_sheet_name or cell_a14_val is None:
+        try:
+            xls = pd.ExcelFile(io.BytesIO(file_bytes))
+            for s in xls.sheet_names:
+                if s.strip().lower() == 'help':
+                    help_sheet_name = s
+                    df_help = xls.parse(s, header=None)
+                    if len(df_help) >= 14 and len(df_help.columns) >= 1:
+                        cell_a14_val = df_help.iloc[13, 0]
+                    break
+        except Exception as pde:
+            print(f"[DEBUG A14] pd.ExcelFile fallback failed for {filename}: {pde}", flush=True)
+
+    print(f"[DEBUG A14 Result] filename='{filename}', help_sheet='{help_sheet_name}', A14='{cell_a14_val}'", flush=True)
+
+    if cell_a14_val is None or 'orders' not in str(cell_a14_val).strip().lower():
+        return False
+        
+    return True
+
+
+@app.route('/api/validate-file', methods=['POST'])
+def validate_file():
+    try:
+        if 'file' not in request.files:
+            return jsonify({'valid': False, 'message': 'Invalid file detected in Rename section. Please upload the correct Orders file.'}), 400
+        f = request.files['file']
+        if not (f.filename.endswith('.xlsx') or f.filename.endswith('.xls') or f.filename.endswith('.csv')):
+            return jsonify({
+                'valid': False,
+                'message': 'Invalid file detected in Rename section. Please upload the correct Orders file.'
+            }), 400
+        f_bytes = f.read()
+        if not check_help_sheet_a14(f_bytes, f.filename):
+            return jsonify({
+                'valid': False,
+                'message': 'Invalid file detected in Rename section. Please upload the correct Orders file.'
+            }), 400
+        return jsonify({'valid': True})
+    except Exception as e:
+        print(f"[VALIDATE API ERROR] {e}", flush=True)
+        return jsonify({
+            'valid': False,
+            'message': 'Invalid file detected in Rename section. Please upload the correct Orders file.'
+        }), 400
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -437,10 +547,13 @@ def upload_files():
     
     for file in files:
         if not (file.filename.endswith('.xlsx') or file.filename.endswith('.xls') or file.filename.endswith('.csv')):
-            continue
+            return jsonify({'error': 'INVALID_FILE_HELP_A14', 'message': 'Invalid file detected in Rename section. Please upload the correct Orders file.'}), 400
         
         try:
             file_bytes = file.read()
+            if not check_help_sheet_a14(file_bytes, file.filename):
+                return jsonify({'error': 'INVALID_FILE_HELP_A14', 'message': 'Invalid file detected in Rename section. Please upload the correct Orders file.'}), 400
+
             # Merged tab requires headers
             df = load_any_sheet_to_dataframe(file_bytes, file.filename, header=0)
             
@@ -559,6 +672,11 @@ def rename_files():
                     'bytes': f_bytes
                 }
             else:
+                if 'taxreportdata' not in f.filename.lower():
+                    return jsonify({
+                        'error': 'INVALID_FILE_TAXES',
+                        'message': 'Invalid file detected in Rename section. Please upload the correct taxes file.'
+                    }), 400
                 rename_files_list.append({
                     'filename': f.filename,
                     'bytes': f_bytes
