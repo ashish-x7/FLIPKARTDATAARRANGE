@@ -2227,6 +2227,9 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
     import datetime
     import shutil
     import tempfile
+    import re
+    from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
     
     os.makedirs('temp', exist_ok=True)
     from_date = None
@@ -2243,20 +2246,78 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
     if df_data is not None and not df_data.empty:
         for idx, row in df_data.iterrows():
             if len(row) > 4:
-                key = str(row.iloc[4]).strip()
+                key = str(row.iloc[4]).strip().replace(" ", "").upper()
                 val = str(row.iloc[2]).strip()
                 if key:
                     data_lookup[key] = val
-                    
-    for r in range(ws_details.max_row, 1, -1):
-        date_val = ws_details.cell(row=r, column=23).value
+
+    def parse_dispute_amount(val):
+        if val is None:
+            return 0.0
+        val_str = str(val).strip()
+        match = re.search(r'Price Dispute\s*:\s*(-?\d+(?:\.\d+)?)', val_str, re.IGNORECASE)
+        if match:
+            try: return float(match.group(1))
+            except: pass
+        num_match = re.search(r'-?\d+(?:\.\d+)?', val_str)
+        if num_match:
+            try: return float(num_match.group(0))
+            except: pass
+        return 0.0
+
+    # Determine correct header row for Details (1-based index)
+    header_row_idx = 1
+    if ws_details.max_row > 1:
+        second_row_val = ws_details.cell(row=2, column=2).value
+        if second_row_val and "invoice" in str(second_row_val).lower():
+            header_row_idx = 2
+
+    # Formatting styles
+    thin_side = Side(border_style="thin", color="D1D5DB")
+    thin_border = Border(top=thin_side, bottom=thin_side, left=thin_side, right=thin_side)
+    header_fill = PatternFill(start_color="2F5597", end_color="2F5597", fill_type="solid")
+    header_font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    data_font = Font(name="Arial", size=10, color="000000")
+    
+    col_alignments = [
+        Alignment(horizontal="left", vertical="center"),    # A: Invoice No
+        Alignment(horizontal="center", vertical="center"),  # B: Invoice Date
+        Alignment(horizontal="left", vertical="center"),    # C: Warehouse Name
+        Alignment(horizontal="center", vertical="center"),  # D: Order ID
+        Alignment(horizontal="center", vertical="center"),  # E: Item Asin
+        Alignment(horizontal="left", vertical="center"),    # F: Item SKU
+        Alignment(horizontal="center", vertical="center"),  # G: Quantity
+        Alignment(horizontal="right", vertical="center"),   # H: Item Cost
+        Alignment(horizontal="left", vertical="center"),    # I: Reason
+        Alignment(horizontal="center", vertical="center"),  # J: Order Date
+        Alignment(horizontal="right", vertical="center"),   # K: Calculated Price
+        Alignment(horizontal="left", vertical="center")     # L: Remarks
+    ]
+
+    deleted_count = 0
+    date_filtered_count = 0
+
+    # Details cleaning and lookup mapping loop
+    for r in range(ws_details.max_row, header_row_idx, -1):
         delete_row = False
         
+        # 1. Lookup date from data
+        b_val = ws_details.cell(row=r, column=2).value
+        date_val = None
+        if b_val:
+            b_clean = str(b_val).strip().replace(" ", "").upper()
+            if b_clean in data_lookup:
+                date_val = data_lookup[b_clean]
+                ws_details.cell(row=r, column=23, value=date_val)
+
+        # 2. Date Range Filter
         if from_date and to_date and date_val:
             try:
                 row_date = None
                 if isinstance(date_val, datetime.datetime):
                     row_date = date_val.date()
+                elif isinstance(date_val, datetime.date):
+                    row_date = date_val
                 else:
                     date_str = str(date_val).strip().split(' ')[0]
                     for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"):
@@ -2268,28 +2329,25 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
                 
                 if row_date and from_date <= row_date <= to_date:
                     delete_row = True
+                    date_filtered_count += 1
             except Exception:
                 pass
                 
+        # 3. Column V Filter (Delete row if value is "0" or "Price Dispute : 0")
         if not delete_row:
             v_val = ws_details.cell(row=r, column=22).value
             if v_val is not None:
                 v_clean = str(v_val).strip()
                 if v_clean == "0" or v_clean == "Price Dispute : 0":
                     delete_row = True
+                    deleted_count += 1
                     
         if delete_row:
             ws_details.delete_rows(r, 1)
-            continue
-            
-        b_val = ws_details.cell(row=r, column=2).value
-        if b_val:
-            b_clean = str(b_val).strip()
-            if b_clean in data_lookup:
-                ws_details.cell(row=r, column=23, value=data_lookup[b_clean])
-                
+
+    # Group surviving rows by Warehouse Name (Column D, index 4)
     party_data = {}
-    for r in range(2, ws_details.max_row + 1):
+    for r in range(header_row_idx + 1, ws_details.max_row + 1):
         party_name = ws_details.cell(row=r, column=4).value
         if party_name:
             party_name = str(party_name).strip()
@@ -2307,8 +2365,6 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
     wb_master = Workbook()
     wb_master.remove(wb_master.active)
     
-    from openpyxl.styles import Alignment, Font
-    
     for party, rows in party_data.items():
         wb_party = Workbook()
         ws_party = wb_party.active
@@ -2321,13 +2377,30 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
         ws_party.title = safe_sheet_title
         ws_master_party = wb_master.create_sheet(title=safe_sheet_title)
         
+        headers = [
+            "Invoice No", "Invoice Date", "Warehouse Name", "Order ID", "Item Asin", "Item SKU",
+            "Quantity", "Item Cost", "Reason", "Order Date", "Calculated Price", "Remarks"
+        ]
+        
         for ws in [ws_party, ws_master_party]:
             ws.merge_cells('A1:L1')
-            cell = ws.cell(row=1, column=1, value=sheet_title)
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.font = Font(bold=True, size=14)
+            title_cell = ws.cell(row=1, column=1, value=sheet_title)
+            title_cell.alignment = Alignment(horizontal='center', vertical='center')
+            title_cell.font = Font(name="Arial", size=12, bold=True, color="000000")
+            title_cell.border = thin_border
+            for c_idx in range(1, 13):
+                ws.cell(row=1, column=c_idx).border = thin_border
+                
+            for col_idx, h_text in enumerate(headers, 1):
+                cell = ws.cell(row=2, column=col_idx, value=h_text)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = thin_border
+                
+            ws.row_dimensions[1].height = 28
+            ws.row_dimensions[2].height = 24
             
-        current_row = 2
         for r_data in rows:
             val_a = r_data[1] if len(r_data) > 1 else ""
             val_b = r_data[2] if len(r_data) > 2 else ""
@@ -2335,29 +2408,35 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
             val_d = r_data[6] if len(r_data) > 6 else ""
             val_e = r_data[7] if len(r_data) > 7 else ""
             val_f = r_data[8] if len(r_data) > 8 else ""
-            val_g = r_data[11] if len(r_data) > 11 else ""
-            val_h = r_data[12] if len(r_data) > 12 else ""
+            
+            try: val_g = int(r_data[11]) if len(r_data) > 11 and r_data[11] is not None else 0
+            except: val_g = 0
+            
+            try: val_h = float(r_data[12]) if len(r_data) > 12 and r_data[12] is not None else 0.0
+            except: val_h = 0.0
+            
             val_i = r_data[21] if len(r_data) > 21 else ""
             val_j = r_data[22] if len(r_data) > 22 else ""
             
-            val_k = ""
-            if val_i is not None and str(val_i).startswith("Price Dispute :"):
-                try:
-                    num_str = str(val_i).split(":")[1].strip()
-                    dispute_num = float(num_str)
-                    base_amount = float(str(val_h).strip()) if val_h else 0.0
-                    val_k = base_amount - dispute_num
-                except Exception:
-                    val_k = "Error"
-            
+            dispute_num = parse_dispute_amount(val_i)
+            val_k = round(val_h - dispute_num, 2)
             val_l = "this amount not coorect as account central price this is approx price that currently live in account central"
             
             mapped_row = [val_a, val_b, val_c, val_d, val_e, val_f, val_g, val_h, val_i, val_j, val_k, val_l]
-            ws_party.append(mapped_row)
-            ws_master_party.append(mapped_row)
-            
-        from openpyxl.utils import get_column_letter
+            for ws in [ws_party, ws_master_party]:
+                ws.append(mapped_row)
+                row_idx = ws.max_row
+                ws.row_dimensions[row_idx].height = 20
+                for col_idx in range(1, 13):
+                    cell = ws.cell(row=row_idx, column=col_idx)
+                    cell.font = data_font
+                    cell.alignment = col_alignments[col_idx-1]
+                    cell.border = thin_border
+                    if col_idx in (8, 11):
+                        cell.number_format = '#,##0.00'
+                        
         for ws in [ws_party, ws_master_party]:
+            ws.sheet_view.showGridLines = True
             for col_idx in range(1, ws.max_column + 1):
                 col_letter = get_column_letter(col_idx)
                 max_len = 0
@@ -2383,10 +2462,29 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
     master_filepath = os.path.join(temp_work_dir, "FLIPKART price dispute.xlsx")
     wb_master.save(master_filepath)
     
-    for r in range(2, ws_details.max_row + 1):
+    # Clean column W of Details worksheet for the saved cleaned version
+    for r in range(header_row_idx + 1, ws_details.max_row + 1):
         ws_details.cell(row=r, column=23, value="")
         
-    cleaned_details_path = os.path.join(temp_work_dir, f"CLEANED_{details_filename}")
+    # Format cleaned Details sheet
+    ws_details.sheet_view.showGridLines = True
+    for r_idx in range(1, ws_details.max_row + 1):
+        ws_details.row_dimensions[r_idx].height = 24 if r_idx == header_row_idx else 20
+        for col_idx in range(1, ws_details.max_column + 1):
+            cell = ws_details.cell(row=r_idx, column=col_idx)
+            cell.border = thin_border
+            if r_idx == header_row_idx:
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = Alignment(horizontal='left', vertical='center')
+            else:
+                cell.font = data_font
+                cell.alignment = Alignment(horizontal='left', vertical='center')
+                
+    save_filename = details_filename
+    if save_filename.lower().endswith('.xls'):
+        save_filename = save_filename[:-4] + '.xlsx'
+    cleaned_details_path = os.path.join(temp_work_dir, f"CLEANED_{save_filename}")
     wb_details.save(cleaned_details_path)
     
     import zipfile

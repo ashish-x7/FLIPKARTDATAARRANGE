@@ -1,6 +1,70 @@
 // Frontend Javascript - Flipkart Order Excel Toolset
 document.addEventListener('DOMContentLoaded', () => {
-    // ----------------------------------------------------
+    // Custom Alert Modal Implementation to override native window.alert
+    function showCustomAlert(title, message, type = 'success') {
+        let modalBackdrop = document.getElementById('customAlertModalBackdrop');
+        if (!modalBackdrop) {
+            modalBackdrop = document.createElement('div');
+            modalBackdrop.id = 'customAlertModalBackdrop';
+            modalBackdrop.className = 'custom-modal-backdrop';
+            modalBackdrop.style.cssText = "display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(5px); z-index: 99999999; align-items: center; justify-content: center;";
+            
+            modalBackdrop.innerHTML = `
+                <div class="custom-modal-card" style="background: #ffffff; border-radius: 16px; width: 90%; max-width: 440px; padding: 28px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3); text-align: center; border: 1px solid #e2e8f0;">
+                    <div id="customAlertModalIcon" style="margin: 0 auto 16px auto; width: 60px; height: 60px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.8rem;">
+                    </div>
+                    <h3 id="customAlertModalTitle" style="margin-bottom: 12px; font-size: 1.3rem; font-weight: 700; color: #1e293b; font-family: 'Outfit', sans-serif;"></h3>
+                    <p id="customAlertModalBody" style="margin-bottom: 24px; font-size: 0.95rem; color: #475569; line-height: 1.5; font-family: 'Outfit', sans-serif;"></p>
+                    <div class="custom-modal-footer" style="display: flex; justify-content: center;">
+                        <button id="customAlertModalOkBtn" style="padding: 11px 40px; font-size: 1rem; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #fff; border: none; border-radius: 10px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);">OK</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modalBackdrop);
+            
+            const okBtn = modalBackdrop.querySelector('#customAlertModalOkBtn');
+            okBtn.addEventListener('click', () => {
+                modalBackdrop.style.display = 'none';
+            });
+        }
+
+        const iconDiv = modalBackdrop.querySelector('#customAlertModalIcon');
+        const titleH3 = modalBackdrop.querySelector('#customAlertModalTitle');
+        const bodyP = modalBackdrop.querySelector('#customAlertModalBody');
+
+        if (type === 'success') {
+            iconDiv.style.background = '#dcfce7';
+            iconDiv.style.color = '#15803d';
+            iconDiv.innerHTML = '<i class="fa-solid fa-circle-check"></i>';
+        } else if (type === 'error') {
+            iconDiv.style.background = '#fee2e2';
+            iconDiv.style.color = '#b91c1c';
+            iconDiv.innerHTML = '<i class="fa-solid fa-circle-xmark"></i>';
+        } else {
+            iconDiv.style.background = '#fef3c7';
+            iconDiv.style.color = '#d97706';
+            iconDiv.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i>';
+        }
+
+        titleH3.textContent = title;
+        bodyP.textContent = message;
+        modalBackdrop.style.display = 'flex';
+    }
+
+    window.alert = function(message) {
+        let title = "Notification";
+        let type = "warning";
+        const lowerMsg = String(message).toLowerCase();
+        if (lowerMsg.includes("success") || lowerMsg.includes("completed") || lowerMsg.includes("done") || lowerMsg.includes("saved")) {
+            title = "Success";
+            type = "success";
+        } else if (lowerMsg.includes("error") || lowerMsg.includes("failed") || lowerMsg.includes("invalid") || lowerMsg.includes("not supported")) {
+            title = "Error";
+            type = "error";
+        }
+        showCustomAlert(title, message, type);
+    };
+
     // TAB SYSTEM
     // ----------------------------------------------------
     const tabMergeBtn = document.getElementById('tabMergeBtn');
@@ -1787,6 +1851,166 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    let errGeneratedZipBlob = null;
+    let errGeneratedZipName = "";
+
+    function readExcelAsAOA(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                    resolve(aoa);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = (err) => reject(err);
+            reader.readAsArrayBuffer(file);
+        });
+    }
+
+    function cleanKey(v) {
+        if (v === undefined || v === null) return "";
+        let str = String(v).trim();
+        str = str.replace(/[^A-Za-z0-9]/g, '');
+        return str.toUpperCase();
+    }
+
+    function parseDisputeAmount(val) {
+        if (val === undefined || val === null) return 0;
+        const str = String(val).trim();
+        const match = str.match(/Price Dispute\s*:\s*(-?\d+(\.\d+)?)/i);
+        if (match) {
+            return parseFloat(match[1]);
+        }
+        const numMatch = str.match(/-?\d+(\.\d+)?/);
+        if (numMatch) {
+            return parseFloat(numMatch[0]);
+        }
+        return 0;
+    }
+
+    function parseCellAsDate(val) {
+        if (val === undefined || val === null || val === "") return null;
+        if (val instanceof Date) return val;
+        if (!isNaN(Number(val)) && Number(val) > 20000) {
+            return new Date((Number(val) - 25569) * 86400000);
+        }
+        const str = String(val).trim();
+        if (!str) return null;
+        const parts = str.split(' ')[0].split(/[-/]/);
+        if (parts.length === 3) {
+            let day, month, year;
+            if (parts[0].length === 4) {
+                year = parseInt(parts[0], 10);
+                month = parseInt(parts[1], 10) - 1;
+                day = parseInt(parts[2], 10);
+            } else {
+                day = parseInt(parts[0], 10);
+                month = parseInt(parts[1], 10) - 1;
+                year = parseInt(parts[2], 10);
+            }
+            const d = new Date(year, month, day);
+            if (!isNaN(d.getTime())) return d;
+        }
+        const d = new Date(str);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function applyWorksheetFormatting(ws, sheetAOA, isGroupSheet, headerRowIdx = 0) {
+        if (!ws || !sheetAOA || sheetAOA.length === 0) return;
+        ws['!views'] = [{ showGridLines: true }];
+
+        const colWidths = sheetAOA[0].map((_, colIndex) => {
+            let maxLen = 10;
+            sheetAOA.forEach((row, rowIndex) => {
+                if (isGroupSheet && rowIndex === 0) return;
+                const val = row[colIndex];
+                if (val !== undefined && val !== null && val !== "") {
+                    const str = String(val);
+                    if (str.length > maxLen) maxLen = str.length;
+                }
+            });
+            return { wch: Math.min(maxLen + 3, 45) };
+        });
+        ws['!cols'] = colWidths;
+
+        const rowHeights = [];
+        if (isGroupSheet) {
+            rowHeights.push({ hpt: 28 });
+            rowHeights.push({ hpt: 24 });
+            for (let r = 2; r < sheetAOA.length; r++) {
+                rowHeights.push({ hpt: 20 });
+            }
+        } else {
+            rowHeights.push({ hpt: 20 });
+            rowHeights.push({ hpt: 24 });
+            for (let r = 2; r < sheetAOA.length; r++) {
+                rowHeights.push({ hpt: 20 });
+            }
+        }
+        ws['!rows'] = rowHeights;
+
+        const colAlignments = [
+            "left", "center", "left", "center", "center", "left",
+            "center", "right", "left", "center", "right", "left"
+        ];
+
+        for (const cellKey in ws) {
+            if (cellKey[0] === '!') continue;
+            const cell = ws[cellKey];
+            const borderStyle = {
+                top: { style: "thin", color: { rgb: "D1D5DB" } },
+                bottom: { style: "thin", color: { rgb: "D1D5DB" } },
+                left: { style: "thin", color: { rgb: "D1D5DB" } },
+                right: { style: "thin", color: { rgb: "D1D5DB" } }
+            };
+            cell.s = { border: borderStyle };
+
+            const match = cellKey.match(/^([A-Z]+)(\d+)$/);
+            if (match) {
+                const col = match[1];
+                const rowNum = parseInt(match[2], 10);
+                const colIndex = XLSX.utils.decode_col(col);
+
+                if (isGroupSheet) {
+                    if (rowNum === 1) {
+                        cell.s.fill = { fgColor: { rgb: "FFFFFF" } };
+                        cell.s.font = { name: "Arial", sz: 12, bold: true, color: { rgb: "000000" } };
+                        cell.s.alignment = { horizontal: "center", vertical: "center" };
+                    } else if (rowNum === 2) {
+                        cell.s.fill = { fgColor: { rgb: "2F5597" } };
+                        cell.s.font = { name: "Arial", sz: 10, bold: true, color: { rgb: "FFFFFF" } };
+                        cell.s.alignment = { horizontal: "center", vertical: "center" };
+                    } else {
+                        cell.s.font = { name: "Arial", sz: 10, color: { rgb: "000000" } };
+                        cell.s.alignment = { horizontal: colAlignments[colIndex] || "left", vertical: "center" };
+                        if (colIndex === 7 || colIndex === 10) {
+                            cell.z = '#,##0.00';
+                        }
+                    }
+                } else {
+                    const detailHeaderRowNum = headerRowIdx + 1;
+                    if (rowNum === detailHeaderRowNum) {
+                        cell.s.fill = { fgColor: { rgb: "2F5597" } };
+                        cell.s.font = { name: "Arial", sz: 10, bold: true, color: { rgb: "FFFFFF" } };
+                        cell.s.alignment = { horizontal: "left", vertical: "center" };
+                    } else if (rowNum < detailHeaderRowNum) {
+                        cell.s.font = { name: "Arial", sz: 10, color: { rgb: "000000" } };
+                    } else {
+                        cell.s.font = { name: "Arial", sz: 10, color: { rgb: "000000" } };
+                        cell.s.alignment = { horizontal: "left", vertical: "center" };
+                    }
+                }
+            }
+        }
+    }
+
     if (errorProcessBtn) {
         errorProcessBtn.addEventListener('click', async () => {
             if (errorFiles.length !== 2) {
@@ -1794,39 +2018,257 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const formData = new FormData();
-            errorFiles.forEach(f => formData.append('files[]', f));
-            
-            if (errorFromDate.value) formData.append('fromDate', errorFromDate.value);
-            if (errorToDate.value) formData.append('toDate', errorToDate.value);
+            let detailsFile = null;
+            let dataFile = null;
 
-            showLoader('Processing Flipkart Error Data... This may take a minute.');
+            if (errorFiles[0].name.toLowerCase().includes('detail')) {
+                detailsFile = errorFiles[0];
+                dataFile = errorFiles[1];
+            } else if (errorFiles[1].name.toLowerCase().includes('detail')) {
+                detailsFile = errorFiles[1];
+                dataFile = errorFiles[0];
+            } else if (errorFiles[0].name.toLowerCase().includes('data')) {
+                dataFile = errorFiles[0];
+                detailsFile = errorFiles[1];
+            } else if (errorFiles[1].name.toLowerCase().includes('data')) {
+                dataFile = errorFiles[1];
+                detailsFile = errorFiles[0];
+            } else {
+                detailsFile = errorFiles[0];
+                dataFile = errorFiles[1];
+            }
+
+            showLoader('Processing Flipkart Error Data Client-Side... Please wait.');
 
             try {
-                const response = await fetch('/api/flipkart-error', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                hideLoader();
-                
-                if (response.ok) {
-                    errorResultCard.style.display = 'block';
-                    errorDownloadBtn.onclick = () => {
-                        window.location.href = '/api/download-error-zip';
-                    };
-                    if (data.records && data.records.length > 0) {
-                        for (const rec of data.records) {
-                            await registerTrackedError('flipkart', rec.filename, rec.party, 'Price Dispute', rec.rows_count);
+                const fromDateStr = errorFromDate.value;
+                const toDateStr = errorToDate.value;
+
+                const fromDate = fromDateStr ? new Date(fromDateStr) : null;
+                const toDate = toDateStr ? new Date(toDateStr) : null;
+
+                if (fromDate) fromDate.setHours(0, 0, 0, 0);
+                if (toDate) toDate.setHours(23, 59, 59, 999);
+
+                // Read files client-side
+                const detailsAOA = await readExcelAsAOA(detailsFile);
+                const dataAOA = await readExcelAsAOA(dataFile);
+
+                if (detailsAOA.length === 0) throw new Error("Details file is empty.");
+                if (dataAOA.length === 0) throw new Error("Data file is empty.");
+
+                // Determine correct header row for Details
+                let headerRowIndex = 0;
+                if (detailsAOA[1] && String(detailsAOA[1][1]).toLowerCase().includes("invoice")) {
+                    headerRowIndex = 1;
+                }
+                const headerDetails = detailsAOA[headerRowIndex];
+
+                // Details AOA check: Column V (index 21). Delete row if value is "0" or "Price Dispute : 0".
+                const filteredDetailsRows = [];
+                let deletedRowCount = 0;
+                for (let i = headerRowIndex + 1; i < detailsAOA.length; i++) {
+                    const row = detailsAOA[i];
+                    const valV = row[21] !== undefined ? String(row[21]).trim() : "";
+                    if (valV === "0" || valV === "Price Dispute : 0") {
+                        deletedRowCount++;
+                    } else {
+                        filteredDetailsRows.push(row);
+                    }
+                }
+
+                // Data AOA: Map Column E (index 4) -> Column C (index 2)
+                const dataMap = new Map();
+                for (let j = 1; j < dataAOA.length; j++) {
+                    const row = dataAOA[j];
+                    const keyE = row[4] !== undefined ? cleanKey(row[4]) : "";
+                    if (keyE) {
+                        const valC = row[2] !== undefined ? row[2] : "";
+                        dataMap.set(keyE, valC);
+                    }
+                }
+
+                // Details AOA: Map Column B (index 1) -> Column W (index 22) and check Date Range
+                let mappedCount = 0;
+                let dateFilteredCount = 0;
+                const survivingRows = [];
+
+                for (let i = 0; i < filteredDetailsRows.length; i++) {
+                    const row = filteredDetailsRows[i];
+                    const keyB = row[1] !== undefined ? cleanKey(row[1]) : "";
+                    
+                    while (row.length < 23) {
+                        row.push("");
+                    }
+                    
+                    let cellValC = "";
+                    if (keyB && dataMap.has(keyB)) {
+                        cellValC = dataMap.get(keyB);
+                        mappedCount++;
+                    }
+                    row[22] = cellValC;
+
+                    // Date filter check
+                    if (fromDate || toDate) {
+                        const cellDate = parseCellAsDate(cellValC);
+                        if (cellDate) {
+                            let inRange = true;
+                            if (fromDate && cellDate < fromDate) inRange = false;
+                            if (toDate && cellDate > toDate) inRange = false;
+
+                            if (inRange) {
+                                dateFilteredCount++;
+                                continue;
+                            }
                         }
                     }
-                } else {
-                    alert('Error: ' + data.error);
+
+                    survivingRows.push(row);
                 }
+
+                // Group survivingRows by Column D (index 3)
+                const partyGroups = new Map();
+                survivingRows.forEach(row => {
+                    const partyKey = String(row[3] || "").trim();
+                    if (partyKey) {
+                        if (!partyGroups.has(partyKey)) {
+                            partyGroups.set(partyKey, []);
+                        }
+                        partyGroups.get(partyKey).push(row);
+                    }
+                });
+
+                // Initialize ZIP and Master Workbook
+                const zip = new JSZip();
+                const masterWb = XLSX.utils.book_new();
+                const partyKeysSorted = Array.from(partyGroups.keys()).sort();
+
+                const partyRecords = [];
+
+                partyKeysSorted.forEach(partyKey => {
+                    const rowsInGroup = partyGroups.get(partyKey);
+
+                    // Row 1 (index 0): Merged A1:L1 title block
+                    const titleRow = [`${partyKey}-price dispute`, "", "", "", "", "", "", "", "", "", "", ""];
+
+                    // Row 2 (index 1): Column Headers
+                    const colHeaders = [
+                        "Invoice No", "Invoice Date", "Warehouse Name", "Order ID", "Item Asin",
+                        "Item SKU", "Quantity", "Item Cost", "Reason", "Order Date", "Calculated Price", "Remarks"
+                    ];
+
+                    const sheetAOA = [titleRow, colHeaders];
+
+                    rowsInGroup.forEach(row => {
+                        const valH = parseFloat(row[12]) || 0;
+                        const valG = parseInt(row[11], 10) || 0;
+                        const disputeVal = parseDisputeAmount(row[21]);
+                        const valK = parseFloat((valH - disputeVal).toFixed(2));
+                        const valL = "this amount not coorect as account central price this is approx price that currently live in account central";
+
+                        const dataRow = [
+                            row[1] || "",
+                            row[2] || "",
+                            row[3] || "",
+                            row[6] || "",
+                            row[7] || "",
+                            row[8] || "",
+                            valG,
+                            valH,
+                            row[21] || "",
+                            row[22] || "",
+                            valK,
+                            valL
+                        ];
+                        sheetAOA.push(dataRow);
+                    });
+
+                    // Convert to sheet and merge A1:L1
+                    const wsGroup = XLSX.utils.aoa_to_sheet(sheetAOA);
+                    wsGroup['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }];
+
+                    // Apply styles
+                    applyWorksheetFormatting(wsGroup, sheetAOA, true);
+
+                    const sheetName = `${partyKey}-price dispute`.substring(0, 31);
+
+                    // Create individual workbook
+                    const wbGroup = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(wbGroup, wsGroup, sheetName);
+                    const bufferGroup = XLSX.write(wbGroup, { bookType: 'xlsx', type: 'array' });
+                    const blobGroup = new Blob([bufferGroup], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    const groupFilename = `${partyKey}-price dispute.xlsx`;
+                    zip.file(groupFilename, blobGroup);
+
+                    // Register tracked error in database
+                    partyRecords.push({
+                        party: partyKey,
+                        filename: groupFilename,
+                        rows_count: rowsInGroup.length
+                    });
+
+                    // Add to combined master workbook
+                    XLSX.utils.book_append_sheet(masterWb, wsGroup, sheetName);
+                });
+
+                // Add master workbook to ZIP if sheets exist
+                if (partyKeysSorted.length > 0) {
+                    const masterBuffer = XLSX.write(masterWb, { bookType: 'xlsx', type: 'array' });
+                    const masterBlob = new Blob([masterBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    zip.file("flipkart price dispute.xlsx", masterBlob);
+                }
+
+                // Clean details column W
+                const topRows = headerRowIndex > 0 ? detailsAOA.slice(0, headerRowIndex) : [[]];
+                const detailsCleaned = [...topRows, headerDetails, ...survivingRows];
+
+                const wbDetails = XLSX.utils.book_new();
+                const wsDetails = XLSX.utils.aoa_to_sheet(detailsCleaned);
+                
+                applyWorksheetFormatting(wsDetails, detailsCleaned, false, headerRowIndex > 0 ? headerRowIndex : 1);
+                XLSX.utils.book_append_sheet(wbDetails, wsDetails, "Processed_Details");
+                const detailsBuffer = XLSX.write(wbDetails, { bookType: 'xlsx', type: 'array' });
+                const detailsBlob = new Blob([detailsBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                
+                let detailsFilename = detailsFile.name;
+                if (detailsFilename.toLowerCase().endsWith('.xls')) {
+                    detailsFilename = detailsFilename.substring(0, detailsFilename.length - 4) + '.xlsx';
+                }
+                zip.file(detailsFilename, detailsBlob);
+
+                // Compile ZIP
+                const zipBlob = await zip.generateAsync({ type: "blob" });
+                errGeneratedZipBlob = zipBlob;
+                errGeneratedZipName = `flipkart_price_dispute_bundle.zip`;
+
+                hideLoader();
+
+                // Show success UI
+                errorResultCard.style.display = 'block';
+                errorDownloadBtn.onclick = () => {
+                    const url = URL.createObjectURL(errGeneratedZipBlob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = errGeneratedZipName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    setTimeout(() => URL.revokeObjectURL(url), 1000);
+                };
+
+                // Save tracked errors
+                if (partyRecords.length > 0) {
+                    for (const rec of partyRecords) {
+                        await registerTrackedError('flipkart', rec.filename, rec.party, 'Price Dispute', rec.rows_count);
+                    }
+                }
+
+                alert('Flipkart Error client-side processing completed successfully!');
+
             } catch (error) {
                 hideLoader();
-                alert('Network Error: ' + error.message);
+                console.error(error);
+                alert('Processing Error: ' + error.message);
             }
         });
     }
