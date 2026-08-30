@@ -86,6 +86,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const invoiceErrorSection = document.getElementById('invoiceErrorSection');
     const errorTrackerSection = document.getElementById('errorTrackerSection');
 
+    // ====================================================
+    // GLOBAL SHARED STATE FOR TAB 4: CREATE FOLDER
+    // (Accessible across Tabs 1, 2, 3, and 4)
+    // ====================================================
+    let fcFiles = [];
+    let selectedFolderFiles = fcFiles;
+    let fcMode = 'files';
+    let folderMode = 'files';
+    let fcFolderGroups = [];
+    let fcZipBlob = null;
+    let fcZipFilename = 'Grouped_Folders.zip';
+    let fcMissingReportBlob = null;
+    let fcModalCurrentFilter = 'all';
+    let fcCountdownInterval = null;
+
+    // Legacy DOM element aliases for Tabs 1, 2, 3 compatibility
+    const folderFileListContainer = document.getElementById('fcSelectedFilesCard');
+    const folderDropzone = document.getElementById('fcDropzone');
+
+    function updateFolderFilesListUI() {
+        fcFiles = selectedFolderFiles;
+        if (typeof updateFcUploadedFileListUI === 'function') {
+            updateFcUploadedFileListUI();
+        }
+    }
+
     function setActiveTab(activeBtn, activeSec) {
         [tabMergeBtn, tabRenameBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn, tabInvoiceErrorBtn, tabErrorTrackerBtn].forEach(btn => {
             if (btn) btn.classList.remove('active');
@@ -172,6 +198,97 @@ document.addEventListener('DOMContentLoaded', () => {
     // ====================================================
     // TAB 1: MERGE & CLEAN ORDERS LOGIC (Excel & CSV)
     // ====================================================
+    // ----------------------------------------------------
+    // PERSISTENCE (1-HOUR EXPIRY) FOR CLEANED ORDERS
+    // ----------------------------------------------------
+    const DB_NAME = 'FlipkartDataArrangeDB';
+    const DB_VERSION = 1;
+    const STORE_NAME = 'cleaned_session';
+    const SESSION_KEY = 'latest_merge_session';
+    const ONE_HOUR_MS = 60 * 60 * 1000; // 1 hour
+
+    let cachedMergedBlob = null;
+    let cachedSessionMetadata = null;
+
+    function openIndexedDB() {
+        return new Promise((resolve, reject) => {
+            if (!window.indexedDB) return reject(new Error('IndexedDB not available'));
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            request.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    async function saveCleanedSession(sessionData) {
+        try {
+            const meta = {
+                timestamp: sessionData.timestamp,
+                expiresAt: sessionData.expiresAt,
+                total_orders: sessionData.total_orders,
+                successMessage: sessionData.successMessage,
+                columns: sessionData.columns,
+                preview: sessionData.preview,
+                files: sessionData.files
+            };
+            try { localStorage.setItem('flipkart_cleaned_session_meta', JSON.stringify(meta)); } catch(e){}
+
+            const db = await openIndexedDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                sessionData.id = SESSION_KEY;
+                const req = store.put(sessionData);
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => reject(req.error);
+            });
+        } catch (err) {
+            console.warn('saveCleanedSession warning:', err);
+        }
+    }
+
+    async function getCleanedSession() {
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.get(SESSION_KEY);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => resolve(null);
+            });
+        } catch (err) {
+            console.warn('getCleanedSession IndexedDB error, checking localStorage:', err);
+            try {
+                const raw = localStorage.getItem('flipkart_cleaned_session_meta');
+                return raw ? JSON.parse(raw) : null;
+            } catch(e) {
+                return null;
+            }
+        }
+    }
+
+    async function clearCleanedSession() {
+        cachedMergedBlob = null;
+        cachedSessionMetadata = null;
+        try { localStorage.removeItem('flipkart_cleaned_session_meta'); } catch(e){}
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.delete(SESSION_KEY);
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => resolve(false);
+            });
+        } catch (err) {}
+    }
+
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
     const filesList = document.getElementById('filesList');
@@ -356,10 +473,14 @@ document.addEventListener('DOMContentLoaded', () => {
         filesListContainer.style.display = 'block';
     }
 
-    clearAllBtn.addEventListener('click', () => {
+    clearAllBtn.addEventListener('click', async () => {
+        await clearCleanedSession();
         selectedFiles = [];
         updateFilesListUI();
         fileInput.value = '';
+        if (resultCard) resultCard.style.display = 'none';
+        const timerSpan = document.getElementById('sessionExpiryTimer');
+        if (timerSpan) timerSpan.style.display = 'none';
     });
 
     processBtn.addEventListener('click', async () => {
@@ -386,12 +507,49 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             hideLoader();
-            successMessage.textContent = `Successfully merged ${selectedFiles.length} file(s). Total orders: ${data.total_orders}`;
+            const msg = `Successfully merged ${selectedFiles.length} file(s). Total orders: ${data.total_orders}`;
+            successMessage.textContent = msg;
             
             renderPreviewTable(data.columns, data.preview);
             
             resultCard.style.display = 'block';
             resultCard.scrollIntoView({ behavior: 'smooth' });
+
+            // Fetch the generated merged file blob to store in 1-hour session
+            try {
+                const dlResp = await fetch('/api/download');
+                if (dlResp.ok) {
+                    cachedMergedBlob = await dlResp.blob();
+                }
+            } catch(e) {
+                console.warn('Could not pre-fetch merged blob for caching:', e);
+            }
+
+            // Save session with 1 hour expiration
+            const now = Date.now();
+            const sessionData = {
+                timestamp: now,
+                expiresAt: now + ONE_HOUR_MS,
+                total_orders: data.total_orders,
+                successMessage: msg,
+                columns: data.columns,
+                preview: data.preview,
+                files: selectedFiles.map(f => ({ name: f.name, size: f.size })),
+                blob: cachedMergedBlob
+            };
+            await saveCleanedSession(sessionData);
+
+            let timerSpan = document.getElementById('sessionExpiryTimer');
+            if (!timerSpan && successMessage && successMessage.parentNode) {
+                timerSpan = document.createElement('div');
+                timerSpan.id = 'sessionExpiryTimer';
+                timerSpan.style.cssText = "display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 6px; margin-top: 6px; font-weight: 500;";
+                successMessage.parentNode.appendChild(timerSpan);
+            }
+            if (timerSpan) {
+                timerSpan.innerHTML = `<i class="fa-regular fa-clock"></i> Active session saved: <b>60 min remaining</b> (Refresh won't remove this until Clear All is clicked)`;
+                timerSpan.style.display = 'inline-flex';
+            }
 
         } catch (error) {
             hideLoader();
@@ -439,6 +597,115 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // ----------------------------------------------------
+    // RESTORE CLEANED SESSION (1-HOUR LIFETIME)
+    // ----------------------------------------------------
+    async function restoreCleanedSessionIfValid() {
+        try {
+            const session = await getCleanedSession();
+            if (!session) return;
+
+            const now = Date.now();
+            if (!session.expiresAt || now > session.expiresAt) {
+                console.log('[SESSION] Cleaned session expired (> 1 hour). Clearing...');
+                await clearCleanedSession();
+                return;
+            }
+
+            cachedSessionMetadata = session;
+            if (session.blob) {
+                cachedMergedBlob = session.blob;
+            }
+
+            const remainingMins = Math.max(1, Math.round((session.expiresAt - now) / 60000));
+            console.log(`[SESSION] Restoring cleaned session. Remaining: ${remainingMins} min.`);
+
+            // 1. Restore Success Banner
+            if (successMessage) {
+                successMessage.textContent = session.successMessage || `Successfully merged orders. Total orders: ${session.total_orders}`;
+            }
+
+            // 2. Add or update session timer indicator
+            let timerSpan = document.getElementById('sessionExpiryTimer');
+            if (!timerSpan && successMessage && successMessage.parentNode) {
+                timerSpan = document.createElement('div');
+                timerSpan.id = 'sessionExpiryTimer';
+                timerSpan.style.cssText = "display: inline-flex; align-items: center; gap: 6px; font-size: 0.82rem; color: #047857; background: #ecfdf5; border: 1px solid #a7f3d0; padding: 4px 10px; border-radius: 6px; margin-top: 6px; font-weight: 500;";
+                successMessage.parentNode.appendChild(timerSpan);
+            }
+            if (timerSpan) {
+                timerSpan.innerHTML = `<i class="fa-regular fa-clock"></i> Active session saved: <b>${remainingMins} min remaining</b> (Refresh won't remove this until Clear All is clicked)`;
+                timerSpan.style.display = 'inline-flex';
+            }
+
+            // 3. Restore Preview Table
+            if (session.columns && session.preview) {
+                renderPreviewTable(session.columns, session.preview);
+            }
+
+            // 4. Show Result Card
+            if (resultCard) {
+                resultCard.style.display = 'block';
+            }
+
+            // 5. Restore Selected Files List UI
+            if (session.files && session.files.length > 0 && filesList && filesListContainer) {
+                filesList.innerHTML = '';
+                if (fileCountSpan) fileCountSpan.textContent = session.files.length;
+                filesListContainer.style.display = 'block';
+
+                session.files.forEach((file, index) => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <div class="file-info">
+                            <i class="fa-regular fa-file-excel"></i>
+                            <div>
+                                <div class="file-name" title="${file.name}">
+                                    ${file.name}
+                                    <span class="file-tag tag-mapping" style="margin-left: 8px; font-size: 0.72rem; padding: 2px 7px;">Cleaned</span>
+                                </div>
+                                <span class="file-size">${formatBytes(file.size)}</span>
+                            </div>
+                        </div>
+                        <button class="remove-file-btn" data-index="${index}"><i class="fa-solid fa-xmark"></i></button>
+                    `;
+                    li.querySelector('.remove-file-btn').addEventListener('click', async () => {
+                        await clearCleanedSession();
+                        selectedFiles = [];
+                        updateFilesListUI();
+                        if (resultCard) resultCard.style.display = 'none';
+                        if (timerSpan) timerSpan.style.display = 'none';
+                    });
+                    filesList.appendChild(li);
+                });
+            }
+
+        } catch (err) {
+            console.error('Error restoring cleaned session:', err);
+        }
+    }
+
+    // Call restoration on page load
+    restoreCleanedSessionIfValid();
+
+    // Hook up downloadBtn to use cached blob if present
+    const downloadBtn = document.getElementById('downloadBtn');
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', (e) => {
+            if (cachedMergedBlob) {
+                e.preventDefault();
+                const url = URL.createObjectURL(cachedMergedBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'Flipkart_Merged_Orders.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+        });
+    }
+
 
     // ====================================================
     // TAB 2: RENAME EXCEL FILES LOGIC (UNIFIED)
@@ -456,6 +723,33 @@ document.addEventListener('DOMContentLoaded', () => {
     const renameLogBody = document.getElementById('renameLogBody');
     const renameInfoNote = document.getElementById('renameInfoNote');
 
+    // New Tab 2 Controls & Modals
+    const renameFullViewBtn = document.getElementById('renameFullViewBtn');
+    const renameMoveToFolderBtn = document.getElementById('renameMoveToFolderBtn');
+    const renameSessionExpiryTimer = document.getElementById('renameSessionExpiryTimer');
+
+    const renameFullViewModal = document.getElementById('renameFullViewModal');
+    const fullViewCountBadge = document.getElementById('fullViewCountBadge');
+    const fullViewDownloadBtn = document.getElementById('fullViewDownloadBtn');
+    const fullViewMoveToFolderBtn = document.getElementById('fullViewMoveToFolderBtn');
+    const renameFullViewCloseBtn = document.getElementById('renameFullViewCloseBtn');
+    const fullViewSearchInput = document.getElementById('fullViewSearchInput');
+    const fullViewTableBody = document.getElementById('fullViewTableBody');
+
+    const renameExcelPreviewModal = document.getElementById('renameExcelPreviewModal');
+    const excelPreviewModalTitle = document.getElementById('excelPreviewModalTitle');
+    const excelPreviewSheetName = document.getElementById('excelPreviewSheetName');
+    const excelPreviewCloseBtn = document.getElementById('excelPreviewCloseBtn');
+    const excelPreviewThead = document.getElementById('excelPreviewThead');
+    const excelPreviewTbody = document.getElementById('excelPreviewTbody');
+
+    const renameEditFilenameModal = document.getElementById('renameEditFilenameModal');
+    const editFilenameInput = document.getElementById('editFilenameInput');
+    const editFilenameExtBadge = document.getElementById('editFilenameExtBadge');
+    const editFilenameError = document.getElementById('editFilenameError');
+    const editFilenameCancelBtn = document.getElementById('editFilenameCancelBtn');
+    const editFilenameSaveBtn = document.getElementById('editFilenameSaveBtn');
+
     // Indicator hooks
     const statusIndicatorLight = document.getElementById('statusIndicatorLight');
     const mappingStatusTitle = document.getElementById('mappingStatusTitle');
@@ -465,6 +759,77 @@ document.addEventListener('DOMContentLoaded', () => {
     let isMappingActive = false;
     let renameResultType = 'zip'; // 'zip' or 'single'
     let renameResultFilename = 'Renamed_Files.zip';
+
+    let currentRenameZipBlob = null;
+    let currentRenameZipInstance = null;
+    let currentRenameLogs = [];
+    let editingLogIndex = -1;
+    let editingOriginalFilename = '';
+
+    // Persistence functions for Rename Tab
+    async function saveRenameSession(sessionData) {
+        try {
+            const meta = {
+                timestamp: sessionData.timestamp,
+                expiresAt: sessionData.expiresAt,
+                filename: sessionData.filename,
+                type: sessionData.type,
+                log: sessionData.log,
+                uploadedFiles: sessionData.uploadedFiles
+            };
+            try { localStorage.setItem('flipkart_rename_session_meta', JSON.stringify(meta)); } catch(e){}
+
+            const db = await openIndexedDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                sessionData.id = 'latest_rename_session';
+                const req = store.put(sessionData);
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => reject(req.error);
+            });
+        } catch (err) {
+            console.warn('saveRenameSession warning:', err);
+        }
+    }
+
+    async function getRenameSession() {
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.get('latest_rename_session');
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => resolve(null);
+            });
+        } catch (err) {
+            console.warn('getRenameSession IndexedDB error, checking localStorage:', err);
+            try {
+                const raw = localStorage.getItem('flipkart_rename_session_meta');
+                return raw ? JSON.parse(raw) : null;
+            } catch(e) {
+                return null;
+            }
+        }
+    }
+
+    async function clearRenameSession() {
+        currentRenameZipBlob = null;
+        currentRenameZipInstance = null;
+        currentRenameLogs = [];
+        try { localStorage.removeItem('flipkart_rename_session_meta'); } catch(e){}
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.delete('latest_rename_session');
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => resolve(false);
+            });
+        } catch (err) {}
+    }
 
     // Fetch saved mapping status from the server
     async function checkMappingStatus() {
@@ -592,10 +957,14 @@ document.addEventListener('DOMContentLoaded', () => {
         renameFilesListContainer.style.display = 'block';
     }
 
-    renameClearAllBtn.addEventListener('click', () => {
+    renameClearAllBtn.addEventListener('click', async () => {
+        await clearRenameSession();
         selectedRenameFiles = [];
         updateRenameFilesListUI();
         renameFileInput.value = '';
+        if (renameResultCard) renameResultCard.style.display = 'none';
+        if (renameSessionExpiryTimer) renameSessionExpiryTimer.style.display = 'none';
+        if (renameFullViewModal) renameFullViewModal.style.display = 'none';
     });
 
     // 3. Process & Rename files
@@ -636,7 +1005,6 @@ document.addEventListener('DOMContentLoaded', () => {
             // Check if mapping was updated/uploaded during the rename call
             if (data.type === 'mapping_only') {
                 alert(`ARRANGE mapping rules uploaded and saved successfully! Loaded ${data.rules_count} brand rules.`);
-                // Clean the list
                 selectedRenameFiles = [];
                 updateRenameFilesListUI();
                 checkMappingStatus();
@@ -651,9 +1019,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // Set up download settings
             renameResultType = data.type;
             renameResultFilename = data.filename;
+            currentRenameLogs = data.log || [];
             
             // Success message
-            renameSuccessMessage.textContent = `Renaming completed! Processed ${data.log.length} file(s).`;
+            renameSuccessMessage.textContent = `Renaming completed! Processed ${currentRenameLogs.length} file(s).`;
             
             // Set button appearance based on file type
             if (renameResultType === 'zip') {
@@ -665,7 +1034,41 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // Populate Log Table
-            renderRenameLogTable(data.log);
+            renderRenameLogTable(currentRenameLogs);
+
+            // Fetch and cache the renamed package blob for 1-hour session and in-browser operations
+            try {
+                const dlResp = await fetch(`/api/download-renamed?type=${data.type}&filename=${encodeURIComponent(data.filename)}`);
+                if (dlResp.ok) {
+                    currentRenameZipBlob = await dlResp.blob();
+                    if (data.type === 'single') {
+                        currentRenameZipInstance = new JSZip();
+                        currentRenameZipInstance.file(data.filename, currentRenameZipBlob);
+                    } else {
+                        currentRenameZipInstance = await JSZip.loadAsync(currentRenameZipBlob);
+                    }
+                }
+            } catch(e) {
+                console.warn('Could not cache rename zip blob:', e);
+            }
+
+            // Save session with 1 hour expiration
+            const now = Date.now();
+            const sessionData = {
+                timestamp: now,
+                expiresAt: now + ONE_HOUR_MS,
+                filename: renameResultFilename,
+                type: renameResultType,
+                log: currentRenameLogs,
+                uploadedFiles: selectedRenameFiles.map(f => ({ name: f.name, size: f.size })),
+                blob: currentRenameZipBlob
+            };
+            await saveRenameSession(sessionData);
+
+            if (renameSessionExpiryTimer) {
+                renameSessionExpiryTimer.innerHTML = `<i class="fa-regular fa-clock"></i> Active session saved: <b>60 min remaining</b> (Refresh won't remove this until Clear All is clicked)`;
+                renameSessionExpiryTimer.style.display = 'inline-flex';
+            }
 
             renameResultCard.style.display = 'block';
             renameResultCard.scrollIntoView({ behavior: 'smooth' });
@@ -707,240 +1110,1477 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 4. Download Trigger
-    renameDownloadBtn.addEventListener('click', () => {
-        const url = `/api/download-renamed?type=${renameResultType}&filename=${encodeURIComponent(renameResultFilename)}`;
-        window.location.href = url;
+    // ----------------------------------------------------
+    // RESTORE RENAMED SESSION (1-HOUR LIFETIME)
+    // ----------------------------------------------------
+    async function restoreRenameSessionIfValid() {
+        try {
+            const session = await getRenameSession();
+            if (!session) return;
+
+            const now = Date.now();
+            if (!session.expiresAt || now > session.expiresAt) {
+                console.log('[SESSION] Renamed session expired (> 1 hour). Clearing...');
+                await clearRenameSession();
+                return;
+            }
+
+            currentRenameLogs = session.log || [];
+            renameResultType = session.type || 'zip';
+            renameResultFilename = session.filename || 'Renamed_Files.zip';
+
+            if (session.blob) {
+                currentRenameZipBlob = session.blob;
+                try {
+                    if (renameResultType === 'single') {
+                        currentRenameZipInstance = new JSZip();
+                        currentRenameZipInstance.file(renameResultFilename, currentRenameZipBlob);
+                    } else {
+                        currentRenameZipInstance = await JSZip.loadAsync(currentRenameZipBlob);
+                    }
+                } catch(e) {
+                    console.warn('Error loading restored rename zip:', e);
+                }
+            }
+
+            const remainingMins = Math.max(1, Math.round((session.expiresAt - now) / 60000));
+            console.log(`[SESSION] Restoring rename session. Remaining: ${remainingMins} min.`);
+
+            // 1. Success Message
+            if (renameSuccessMessage) {
+                renameSuccessMessage.textContent = `Renaming completed! Processed ${currentRenameLogs.length} file(s).`;
+            }
+
+            // 2. Timer badge
+            if (renameSessionExpiryTimer) {
+                renameSessionExpiryTimer.innerHTML = `<i class="fa-regular fa-clock"></i> Active session saved: <b>${remainingMins} min remaining</b> (Refresh won't remove this until Clear All is clicked)`;
+                renameSessionExpiryTimer.style.display = 'inline-flex';
+            }
+
+            // 3. Download button label
+            if (renameResultType === 'zip') {
+                renameDownloadBtn.innerHTML = '<i class="fa-solid fa-file-zipper"></i> Download Renamed Files (ZIP)';
+                renameInfoNote.innerHTML = '<i class="fa-solid fa-circle-info"></i> Files have been renamed. Download the ZIP folder containing all renamed files.';
+            } else {
+                renameDownloadBtn.innerHTML = '<i class="fa-solid fa-file-arrow-down"></i> Download Renamed File';
+                renameInfoNote.innerHTML = `<i class="fa-solid fa-circle-info"></i> File successfully renamed to: <b>${renameResultFilename}</b>`;
+            }
+
+            // 4. Log Table
+            renderRenameLogTable(currentRenameLogs);
+
+            // 5. Result Card
+            if (renameResultCard) {
+                renameResultCard.style.display = 'block';
+            }
+
+            // 6. Selected Files List UI
+            if (session.uploadedFiles && session.uploadedFiles.length > 0 && renameFilesList && renameFilesListContainer) {
+                renameFilesList.innerHTML = '';
+                if (renameFileCountSpan) renameFileCountSpan.textContent = session.uploadedFiles.length;
+                renameFilesListContainer.style.display = 'block';
+
+                session.uploadedFiles.forEach((file, index) => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <div class="file-info">
+                            <i class="fa-regular fa-file-excel"></i>
+                            <div>
+                                <div class="file-name" title="${file.name}">
+                                    ${file.name}
+                                    <span class="file-tag tag-rename" style="margin-left: 8px; font-size: 0.72rem; padding: 2px 7px;">Renamed</span>
+                                </div>
+                                <span class="file-size">${formatBytes(file.size)}</span>
+                            </div>
+                        </div>
+                        <button class="remove-file-btn" data-index="${index}"><i class="fa-solid fa-xmark"></i></button>
+                    `;
+                    li.querySelector('.remove-file-btn').addEventListener('click', async () => {
+                        await clearRenameSession();
+                        selectedRenameFiles = [];
+                        updateRenameFilesListUI();
+                        if (renameResultCard) renameResultCard.style.display = 'none';
+                        if (renameSessionExpiryTimer) renameSessionExpiryTimer.style.display = 'none';
+                    });
+                    renameFilesList.appendChild(li);
+                });
+            }
+
+        } catch (err) {
+            console.error('Error restoring rename session:', err);
+        }
+    }
+
+    // Call restoration on load
+    restoreRenameSessionIfValid();
+
+    // ----------------------------------------------------
+    // FULL VIEW MODAL & ACTIONS (VIEW 50 ROWS, EDIT, DELETE)
+    // ----------------------------------------------------
+    function renderFullViewTable(filterText = '') {
+        if (!fullViewTableBody) return;
+        fullViewTableBody.innerHTML = '';
+
+        if (!currentRenameLogs || currentRenameLogs.length === 0) {
+            fullViewTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 30px; color: #94a3b8;">No renamed files available.</td></tr>';
+            if (fullViewCountBadge) fullViewCountBadge.textContent = '0 Files';
+            return;
+        }
+
+        const lowerFilter = filterText.toLowerCase().trim();
+        let matchCount = 0;
+
+        currentRenameLogs.forEach((log, index) => {
+            if (lowerFilter) {
+                const matchOriginal = log.original && log.original.toLowerCase().includes(lowerFilter);
+                const matchRenamed = log.renamed && log.renamed.toLowerCase().includes(lowerFilter);
+                const matchCode = log.code && log.code.toLowerCase().includes(lowerFilter);
+                if (!matchOriginal && !matchRenamed && !matchCode) return;
+            }
+
+            matchCount++;
+            const tr = document.createElement('tr');
+
+            tr.innerHTML = `
+                <td style="text-align: center; color: #64748b; font-weight: 600;">${index + 1}</td>
+                <td style="color: #475569;" title="${log.original}">${log.original}</td>
+                <td class="col-highlight" style="font-weight: 700; color: #1e293b;" title="${log.renamed}">${log.renamed}</td>
+                <td><span class="file-tag tag-rename" style="font-size: 0.75rem; padding: 3px 8px;">${log.code || 'None'}</span></td>
+                <td>
+                    <div class="action-buttons-group" style="justify-content: center;">
+                        <button type="button" class="btn-action btn-action-view" data-filename="${log.renamed}" title="View first 50 rows">
+                            <i class="fa-solid fa-eye"></i> View
+                        </button>
+                        <button type="button" class="btn-action btn-action-edit" data-index="${index}" data-filename="${log.renamed}" title="Edit filename">
+                            <i class="fa-solid fa-pen-to-square"></i> Edit
+                        </button>
+                        <button type="button" class="btn-action btn-action-delete" data-index="${index}" data-filename="${log.renamed}" title="Delete file">
+                            <i class="fa-solid fa-trash-can"></i> Delete
+                        </button>
+                    </div>
+                </td>
+            `;
+
+            tr.querySelector('.btn-action-view').addEventListener('click', () => {
+                viewExcelFile50Rows(log.renamed);
+            });
+
+            tr.querySelector('.btn-action-edit').addEventListener('click', () => {
+                openEditFilenameModal(index, log.renamed);
+            });
+
+            tr.querySelector('.btn-action-delete').addEventListener('click', () => {
+                deleteRenamedFile(index, log.renamed);
+            });
+
+            fullViewTableBody.appendChild(tr);
+        });
+
+        if (fullViewCountBadge) {
+            fullViewCountBadge.textContent = matchCount === currentRenameLogs.length
+                ? `${currentRenameLogs.length} Files`
+                : `${matchCount} / ${currentRenameLogs.length} Files`;
+        }
+    }
+
+    // View first 50 rows of Excel/CSV file without lag
+    async function viewExcelFile50Rows(filename) {
+        if (!currentRenameZipInstance) {
+            alert('File package is not loaded. Please re-run the rename process.');
+            return;
+        }
+
+        const fileEntry = currentRenameZipInstance.file(filename);
+        if (!fileEntry) {
+            alert(`File "${filename}" not found in current package.`);
+            return;
+        }
+
+        showLoader(`Loading preview for ${filename}...`);
+        try {
+            const arrayBuffer = await fileEntry.async('arraybuffer');
+            if (!window.XLSX) {
+                throw new Error('XLSX parser library not loaded.');
+            }
+
+            // Parse first 51 rows (1 header + 50 data rows) to avoid memory or CPU lag
+            const workbook = XLSX.read(arrayBuffer, { type: 'array', sheetRows: 51 });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+            hideLoader();
+
+            excelPreviewThead.innerHTML = '';
+            excelPreviewTbody.innerHTML = '';
+
+            if (!rows || rows.length === 0) {
+                excelPreviewTbody.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 20px;">Sheet is empty.</td></tr>';
+            } else {
+                const headerRow = rows[0];
+                const trHead = document.createElement('tr');
+                const thNum = document.createElement('th');
+                thNum.className = 'excel-row-num';
+                thNum.textContent = '#';
+                trHead.appendChild(thNum);
+
+                headerRow.forEach((colName, colIdx) => {
+                    const th = document.createElement('th');
+                    th.textContent = colName !== undefined && colName !== null && colName !== '' ? colName : `Col ${colIdx + 1}`;
+                    trHead.appendChild(th);
+                });
+                excelPreviewThead.appendChild(trHead);
+
+                const dataRows = rows.slice(1, 51);
+                dataRows.forEach((row, rowIdx) => {
+                    const tr = document.createElement('tr');
+                    const tdNum = document.createElement('td');
+                    tdNum.className = 'excel-row-num';
+                    tdNum.textContent = rowIdx + 1;
+                    tr.appendChild(tdNum);
+
+                    for (let c = 0; c < headerRow.length; c++) {
+                        const td = document.createElement('td');
+                        const val = row[c];
+                        td.textContent = val !== undefined && val !== null ? val : '';
+                        td.title = td.textContent;
+                        tr.appendChild(td);
+                    }
+                    excelPreviewTbody.appendChild(tr);
+                });
+            }
+
+            excelPreviewModalTitle.textContent = filename;
+            excelPreviewSheetName.textContent = `Sheet: ${sheetName || 'Sheet1'} • Displaying first ${Math.min(50, Math.max(0, rows.length - 1))} rows (Lag-Free)`;
+            renameExcelPreviewModal.style.display = 'flex';
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error viewing Excel file:', err);
+            alert('Failed to preview file: ' + (err.message || 'Unknown error'));
+        }
+    }
+
+    // Open Edit Filename Modal with locked extension
+    function openEditFilenameModal(index, filename) {
+        editingLogIndex = index;
+        editingOriginalFilename = filename;
+
+        const lastDot = filename.lastIndexOf('.');
+        const stem = lastDot !== -1 ? filename.slice(0, lastDot) : filename;
+        const ext = lastDot !== -1 ? filename.slice(lastDot) : '';
+
+        editFilenameInput.value = stem;
+        editFilenameExtBadge.textContent = ext;
+        if (editFilenameError) editFilenameError.style.display = 'none';
+
+        renameEditFilenameModal.style.display = 'flex';
+        setTimeout(() => {
+            editFilenameInput.focus();
+            editFilenameInput.select();
+        }, 100);
+    }
+
+    // Save Edited Filename
+    async function saveEditedFilename() {
+        const newStem = editFilenameInput.value.trim();
+        const ext = editFilenameExtBadge.textContent;
+
+        if (!newStem) {
+            editFilenameError.textContent = 'Filename cannot be empty.';
+            editFilenameError.style.display = 'block';
+            return;
+        }
+
+        if (/[\\/:*?"<>|]/.test(newStem)) {
+            editFilenameError.textContent = 'Filename cannot contain \\ / : * ? " < > |';
+            editFilenameError.style.display = 'block';
+            return;
+        }
+
+        const newFullName = newStem + ext;
+        if (newFullName === editingOriginalFilename) {
+            renameEditFilenameModal.style.display = 'none';
+            return;
+        }
+
+        const exists = currentRenameLogs.some((l, idx) => idx !== editingLogIndex && l.renamed.toLowerCase() === newFullName.toLowerCase());
+        if (exists) {
+            editFilenameError.textContent = `A file named "${newFullName}" already exists in this package.`;
+            editFilenameError.style.display = 'block';
+            return;
+        }
+
+        showLoader('Updating filename in ZIP...');
+        try {
+            if (currentRenameZipInstance) {
+                const oldEntry = currentRenameZipInstance.file(editingOriginalFilename);
+                if (oldEntry) {
+                    const data = await oldEntry.async('uint8array');
+                    currentRenameZipInstance.file(newFullName, data);
+                    currentRenameZipInstance.remove(editingOriginalFilename);
+                    currentRenameZipBlob = await currentRenameZipInstance.generateAsync({ type: 'blob' });
+                }
+            }
+
+            if (currentRenameLogs[editingLogIndex]) {
+                currentRenameLogs[editingLogIndex].renamed = newFullName;
+            }
+
+            const session = await getRenameSession();
+            if (session) {
+                session.log = currentRenameLogs;
+                session.blob = currentRenameZipBlob;
+                await saveRenameSession(session);
+            }
+
+            hideLoader();
+            renameEditFilenameModal.style.display = 'none';
+
+            renderRenameLogTable(currentRenameLogs);
+            renderFullViewTable(fullViewSearchInput ? fullViewSearchInput.value : '');
+
+            showCustomAlert('Filename Updated', `File renamed to "${newFullName}" successfully!`, 'success');
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error renaming file in zip:', err);
+            alert('Failed to rename file: ' + err.message);
+        }
+    }
+
+    // Delete Renamed File
+    async function deleteRenamedFile(index, filename) {
+        if (!confirm(`Are you sure you want to delete "${filename}" from this package?`)) {
+            return;
+        }
+
+        showLoader(`Deleting ${filename}...`);
+        try {
+            if (currentRenameZipInstance) {
+                currentRenameZipInstance.remove(filename);
+                currentRenameZipBlob = await currentRenameZipInstance.generateAsync({ type: 'blob' });
+            }
+
+            currentRenameLogs.splice(index, 1);
+
+            const session = await getRenameSession();
+            if (session) {
+                session.log = currentRenameLogs;
+                session.blob = currentRenameZipBlob;
+                await saveRenameSession(session);
+            }
+
+            hideLoader();
+
+            if (currentRenameLogs.length === 0) {
+                renameResultCard.style.display = 'none';
+                renameFullViewModal.style.display = 'none';
+                await clearRenameSession();
+                showCustomAlert('Package Empty', 'All files have been removed from the package.', 'warning');
+                return;
+            }
+
+            renameSuccessMessage.textContent = `Renaming completed! Processed ${currentRenameLogs.length} file(s).`;
+            renderRenameLogTable(currentRenameLogs);
+            renderFullViewTable(fullViewSearchInput ? fullViewSearchInput.value : '');
+
+            showCustomAlert('File Deleted', `"${filename}" was removed from the package.`, 'success');
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error deleting file:', err);
+            alert('Failed to delete file: ' + err.message);
+        }
+    }
+
+    // Move Renamed Files to Create Folder
+    async function moveRenamedFilesToCreateFolder() {
+        if (!currentRenameZipInstance && !currentRenameZipBlob) {
+            alert('No renamed files available. Please run the rename process first.');
+            return;
+        }
+
+        showLoader('Moving renamed files to Create Folder...');
+        try {
+            let zip = currentRenameZipInstance;
+            if (!zip && currentRenameZipBlob) {
+                zip = await JSZip.loadAsync(currentRenameZipBlob);
+                currentRenameZipInstance = zip;
+            }
+
+            const filesToMove = [];
+            for (const [fname, entry] of Object.entries(zip.files)) {
+                if (!entry.dir) {
+                    const blob = await entry.async('blob');
+                    const file = new File([blob], fname, {
+                        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        lastModified: Date.now()
+                    });
+                    file.customRelativePath = fname;
+                    filesToMove.push(file);
+                }
+            }
+
+            if (filesToMove.length === 0) {
+                hideLoader();
+                alert('No files found in package to move.');
+                return;
+            }
+
+            const modeFilesBtn1 = document.getElementById('fcModeFilesBtn') || document.getElementById('folderModeFilesBtn');
+            if (folderMode !== 'files' && modeFilesBtn1) {
+                modeFilesBtn1.click();
+            }
+
+            filesToMove.forEach(newFile => {
+                const existingIdx = selectedFolderFiles.findIndex(f => f.name === newFile.name);
+                if (existingIdx !== -1) {
+                    selectedFolderFiles[existingIdx] = newFile;
+                } else {
+                    selectedFolderFiles.push(newFile);
+                }
+            });
+            fcFiles = selectedFolderFiles;
+
+            updateFolderFilesListUI();
+
+            hideLoader();
+
+            if (renameFullViewModal) renameFullViewModal.style.display = 'none';
+
+            if (tabFolderBtn) {
+                tabFolderBtn.click();
+            }
+
+            setTimeout(() => {
+                const targetEl = document.getElementById('fcSelectedFilesCard') || document.getElementById('fcDropzone');
+                if (targetEl && targetEl.style.display !== 'none') {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    const dropzone = document.getElementById('fcDropzone');
+                    if (dropzone) dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 150);
+
+            showCustomAlert(
+                'Moved to Create Folder',
+                `${filesToMove.length} renamed file(s) have been successfully added to Create Folder!`,
+                'success'
+            );
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error moving renamed files to Create Folder:', err);
+            alert('Failed to move files: ' + err.message);
+        }
+    }
+
+    // Trigger Renamed Download
+    async function triggerRenamedDownload() {
+        if (currentRenameZipInstance) {
+            try {
+                showLoader('Preparing download...');
+                const blob = await currentRenameZipInstance.generateAsync({ type: 'blob' });
+                hideLoader();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = renameResultFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                return;
+            } catch(e) {
+                hideLoader();
+                console.warn('Client zip generation fallback to server:', e);
+            }
+        }
+        window.location.href = `/api/download-renamed?type=${renameResultType}&filename=${encodeURIComponent(renameResultFilename)}`;
+    }
+
+    // Event Listeners for Tab 2 Actions & Modals
+    if (renameFullViewBtn) {
+        renameFullViewBtn.addEventListener('click', () => {
+            renderFullViewTable(fullViewSearchInput ? fullViewSearchInput.value : '');
+            renameFullViewModal.style.display = 'flex';
+        });
+    }
+
+    if (renameFullViewCloseBtn) {
+        renameFullViewCloseBtn.addEventListener('click', () => {
+            renameFullViewModal.style.display = 'none';
+        });
+    }
+
+    if (fullViewSearchInput) {
+        fullViewSearchInput.addEventListener('input', (e) => {
+            renderFullViewTable(e.target.value);
+        });
+    }
+
+    if (excelPreviewCloseBtn) {
+        excelPreviewCloseBtn.addEventListener('click', () => {
+            renameExcelPreviewModal.style.display = 'none';
+        });
+    }
+
+    if (editFilenameCancelBtn) {
+        editFilenameCancelBtn.addEventListener('click', () => {
+            renameEditFilenameModal.style.display = 'none';
+        });
+    }
+
+    if (editFilenameSaveBtn) {
+        editFilenameSaveBtn.addEventListener('click', saveEditedFilename);
+    }
+
+    if (editFilenameInput) {
+        editFilenameInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                saveEditedFilename();
+            }
+        });
+    }
+
+    if (renameMoveToFolderBtn) renameMoveToFolderBtn.addEventListener('click', moveRenamedFilesToCreateFolder);
+    if (fullViewMoveToFolderBtn) fullViewMoveToFolderBtn.addEventListener('click', moveRenamedFilesToCreateFolder);
+    if (renameDownloadBtn) renameDownloadBtn.addEventListener('click', triggerRenamedDownload);
+    if (fullViewDownloadBtn) fullViewDownloadBtn.addEventListener('click', triggerRenamedDownload);
+
+    // ====================================================
+    // ====================================================
+    // TAB 3: SEPARATE FILE LOGIC (SPLIT FILE - 4 DIRECT CARDS)
+    // ====================================================
+    const SPLIT_OPTIONS = {
+        '1': {
+            title: 'Option 1: SIMPLE',
+            desc: 'Split by Column D (FLIPKART). Header rows: 2.',
+            badge: 'Prefix Output • Ready for Create Folder',
+            tag: 'Simple'
+        },
+        '2': {
+            title: 'Option 2: DETAILS',
+            desc: 'Split by Column D (FLIPKART Warehouse / Seller Code). Header rows: 2.',
+            badge: 'Multi-sheet Bundle',
+            tag: 'Details'
+        },
+        '3': {
+            title: 'Option 3: SUMMARY',
+            desc: 'Split by Column G (FLIPKART Warehouse / Code). Header rows: 2.',
+            badge: 'Multi-sheet Bundle',
+            tag: 'Summary'
+        },
+        '4': {
+            title: 'Option 4: TAX SPLIT',
+            desc: 'Split by Column A (GSTIN / Tax details). Header rows: 1.',
+            badge: 'Tax Bundle',
+            tag: 'Tax Split'
+        }
+    };
+
+    let currentSplitOption = '1';
+    let selectedSplitFiles = { '1': null, '2': null, '3': null, '4': null };
+    let splitSessions = {
+        '1': { blob: null, zipInstance: null, logs: [], filename: 'flipkart_simple_seprate_bundle.zip', expiresAt: 0, fileMeta: null },
+        '2': { blob: null, zipInstance: null, logs: [], filename: 'flipkart_details_seprate_bundle.zip', expiresAt: 0, fileMeta: null },
+        '3': { blob: null, zipInstance: null, logs: [], filename: 'flipkart_summaary_seprate_bundle.zip', expiresAt: 0, fileMeta: null },
+        '4': { blob: null, zipInstance: null, logs: [], filename: 'flipkart_tax_seprate_bundle.zip', expiresAt: 0, fileMeta: null }
+    };
+
+    let editingSplitLogIndex = -1;
+    let editingSplitOriginalFilename = '';
+
+    // Split Full View Modal elements
+    const splitFullViewModal = document.getElementById('splitFullViewModal');
+    const splitFullViewTitle = document.getElementById('splitFullViewTitle');
+    const splitFullViewCountBadge = document.getElementById('splitFullViewCountBadge');
+    const splitFullViewDownloadBtn = document.getElementById('splitFullViewDownloadBtn');
+    const splitFullViewMoveToFolderBtn = document.getElementById('splitFullViewMoveToFolderBtn');
+    const splitFullViewCloseBtn = document.getElementById('splitFullViewCloseBtn');
+    const splitFullViewSearchInput = document.getElementById('splitFullViewSearchInput');
+    const splitFullViewTableBody = document.getElementById('splitFullViewTableBody');
+
+    // Persistence helpers for Split
+    async function saveSplitSession(opt, sessionData) {
+        try {
+            const meta = {
+                timestamp: sessionData.timestamp,
+                expiresAt: sessionData.expiresAt,
+                filename: sessionData.filename,
+                log: sessionData.log,
+                fileMeta: sessionData.fileMeta
+            };
+            try { localStorage.setItem(`flipkart_split_meta_${opt}`, JSON.stringify(meta)); } catch(e){}
+
+            const db = await openIndexedDB();
+            return new Promise((resolve, reject) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                sessionData.id = `latest_split_session_${opt}`;
+                const req = store.put(sessionData);
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => reject(req.error);
+            });
+        } catch (e) {
+            console.warn(`saveSplitSession (${opt}) error:`, e);
+        }
+    }
+
+    async function getSplitSession(opt) {
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.get(`latest_split_session_${opt}`);
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => resolve(null);
+            });
+        } catch (e) {
+            try {
+                const raw = localStorage.getItem(`flipkart_split_meta_${opt}`);
+                return raw ? JSON.parse(raw) : null;
+            } catch(err) {
+                return null;
+            }
+        }
+    }
+
+    async function clearSplitSession(opt) {
+        splitSessions[opt] = { blob: null, zipInstance: null, logs: [], filename: 'Split_Files.zip', expiresAt: 0, fileMeta: null };
+        try { localStorage.removeItem(`flipkart_split_meta_${opt}`); } catch(e){}
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.delete(`latest_split_session_${opt}`);
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => resolve(false);
+            });
+        } catch (e) {}
+    }
+
+    // Initialize each of the 4 option cards
+    ['1', '2', '3', '4'].forEach(opt => {
+        const dropzone = document.getElementById(`splitDropzone${opt}`);
+        const fileInput = document.getElementById(`splitFileInput${opt}`);
+        const fileInfo = document.getElementById(`splitFileInfo${opt}`);
+        const fileName = document.getElementById(`splitFileName${opt}`);
+        const fileSize = document.getElementById(`splitFileSize${opt}`);
+        const clearBtn = document.getElementById(`splitClearBtn${opt}`);
+        const processBtn = document.getElementById(`splitProcessBtn${opt}`);
+        const resultCard = document.getElementById(`splitResult${opt}`);
+        const successMsg = document.getElementById(`splitSuccessMsg${opt}`);
+        const timerBadge = document.getElementById(`splitTimer${opt}`);
+        const downloadBtn = document.getElementById(`splitDownloadBtn${opt}`);
+        const fullViewBtn = document.getElementById(`splitFullViewBtn${opt}`);
+        const moveToFolderBtn = (opt === '1') ? document.getElementById('splitMoveToFolderBtn1') : null;
+
+        function updateOptionUI() {
+            const file = selectedSplitFiles[opt];
+            if (file) {
+                if (fileName) fileName.textContent = file.name;
+                if (fileSize) fileSize.textContent = formatBytes(file.size);
+                if (fileInfo) fileInfo.style.display = 'flex';
+            } else {
+                if (fileInfo) fileInfo.style.display = 'none';
+                if (fileInput) fileInput.value = '';
+            }
+        }
+
+        function handleFile(file) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
+                alert(`File "${file.name}" is not supported (supports Excel/CSV).`);
+                return;
+            }
+            selectedSplitFiles[opt] = file;
+            updateOptionUI();
+        }
+
+        // Dropzone events
+        if (dropzone) {
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropzone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropzone.classList.add('dragover');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropzone.addEventListener(eventName, (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    dropzone.classList.remove('dragover');
+                }, false);
+            });
+
+            dropzone.addEventListener('click', () => {
+                if (fileInput) fileInput.click();
+            });
+
+            dropzone.addEventListener('drop', (e) => {
+                if (e.dataTransfer.files.length > 0) {
+                    handleFile(e.dataTransfer.files[0]);
+                }
+            });
+        }
+
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFile(e.target.files[0]);
+                }
+            });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                selectedSplitFiles[opt] = null;
+                updateOptionUI();
+                await clearSplitSession(opt);
+                if (resultCard) resultCard.style.display = 'none';
+            });
+        }
+
+        // Process button
+        if (processBtn) {
+            processBtn.addEventListener('click', async () => {
+                const file = selectedSplitFiles[opt];
+                if (!file) {
+                    alert(`Please upload an Excel/CSV file for Option ${opt} first.`);
+                    return;
+                }
+
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('option', opt);
+
+                showLoader(`Processing Option ${opt} (${SPLIT_OPTIONS[opt].tag})...`);
+                if (resultCard) resultCard.style.display = 'none';
+
+                try {
+                    const response = await fetch('/api/split', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || 'Server processing error.');
+
+                    hideLoader();
+
+                    const zipFilename = data.zip_filename || `Split_Option_${opt}.zip`;
+                    const logs = data.log || [];
+
+                    // Fetch and cache the split ZIP blob
+                    let zipBlob = null;
+                    let zipInstance = null;
+                    try {
+                        const dlRes = await fetch(`/api/download-split?option=${opt}&filename=${encodeURIComponent(zipFilename)}`);
+                        if (dlRes.ok) {
+                            zipBlob = await dlRes.blob();
+                            zipInstance = await JSZip.loadAsync(zipBlob);
+                        }
+                    } catch(e) {
+                        console.warn(`Could not load split zip blob for Option ${opt}:`, e);
+                    }
+
+                    const now = Date.now();
+                    const sessionData = {
+                        timestamp: now,
+                        expiresAt: now + ONE_HOUR_MS,
+                        filename: zipFilename,
+                        log: logs,
+                        fileMeta: { name: file.name, size: file.size },
+                        blob: zipBlob
+                    };
+
+                    splitSessions[opt] = {
+                        blob: zipBlob,
+                        zipInstance: zipInstance,
+                        logs: logs,
+                        filename: zipFilename,
+                        expiresAt: sessionData.expiresAt,
+                        fileMeta: sessionData.fileMeta
+                    };
+
+                    await saveSplitSession(opt, sessionData);
+
+                    // Update this card's results
+                    if (successMsg) successMsg.textContent = `Generated ${logs.length} separate file(s)!`;
+                    if (timerBadge) {
+                        timerBadge.innerHTML = `<i class="fa-regular fa-clock"></i> 60 min remaining`;
+                    }
+                    if (resultCard) {
+                        resultCard.style.display = 'block';
+                    }
+
+                    showCustomAlert('Split Completed', `Option ${opt} generated ${logs.length} files successfully!`, 'success');
+
+                } catch (error) {
+                    hideLoader();
+                    alert(`Error during splitting: ${error.message}`);
+                }
+            });
+        }
+
+        // Download button
+        if (downloadBtn) {
+            downloadBtn.addEventListener('click', () => {
+                triggerSplitDownloadForOption(opt);
+            });
+        }
+
+        // Full View button
+        if (fullViewBtn) {
+            fullViewBtn.addEventListener('click', () => {
+                currentSplitOption = opt;
+                if (splitFullViewSearchInput) splitFullViewSearchInput.value = '';
+                renderSplitFullViewTable(opt, '');
+                if (splitFullViewModal) splitFullViewModal.style.display = 'flex';
+            });
+        }
+
+        // Move to Create Folder (Option 1 only)
+        if (moveToFolderBtn) {
+            moveToFolderBtn.addEventListener('click', moveSplitFilesToCreateFolder);
+        }
     });
 
-    // ====================================================
-    // TAB 3: SEPARATE FILE LOGIC (SPLIT FILE)
-    // ====================================================
-    const splitDropzone = document.getElementById('splitDropzone');
-    const splitFileInput = document.getElementById('splitFileInput');
-    const splitFileList = document.getElementById('splitFileList');
-    const splitFileListContainer = document.getElementById('splitFileListContainer');
-    const splitClearBtn = document.getElementById('splitClearBtn');
-    const splitProcessBtn = document.getElementById('splitProcessBtn');
-    const splitResultCard = document.getElementById('splitResultCard');
-    const splitSuccessMessage = document.getElementById('splitSuccessMessage');
-    const splitDownloadBtn = document.getElementById('splitDownloadBtn');
-    const splitLogBody = document.getElementById('splitLogBody');
-
-    let selectedSplitFile = null;
-    let splitZipFilename = 'Split_Files.zip';
-
-    // Dropzone logic
-    if (splitDropzone) {
-        ['dragenter', 'dragover'].forEach(eventName => {
-            splitDropzone.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                splitDropzone.classList.add('dragover');
-            }, false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            splitDropzone.addEventListener(eventName, (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                splitDropzone.classList.remove('dragover');
-            }, false);
-        });
-
-        splitDropzone.addEventListener('click', () => {
-            if (splitFileInput) splitFileInput.click();
-        });
-        
-        splitDropzone.addEventListener('drop', (e) => {
-            if (e.dataTransfer.files.length > 0) {
-                handleSplitFileSelection(e.dataTransfer.files[0]);
+    // Bulk Process All Uploaded Files Button (Master Button)
+    const masterBtn = document.getElementById('splitMasterProcessBtn') || document.getElementById('splitProcessAllBtn');
+    if (masterBtn) {
+        masterBtn.addEventListener('click', async () => {
+            const activeOptions = ['1', '2', '3', '4'].filter(opt => selectedSplitFiles[opt] !== null);
+            if (activeOptions.length === 0) {
+                alert('Please upload an Excel/CSV file to at least one option before clicking Start All.');
+                return;
             }
-        });
-    }
 
-    if (splitFileInput) {
-        splitFileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleSplitFileSelection(e.target.files[0]);
-            }
-        });
-    }
-
-    function handleSplitFileSelection(file) {
-        const ext = file.name.split('.').pop().toLowerCase();
-        if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
-            alert(`File "${file.name}" is not supported (supports Excel/CSV).`);
-            return;
-        }
-        selectedSplitFile = file;
-        updateSplitFileUI();
-    }
-
-    function updateSplitFileUI() {
-        if (!splitFileList) return;
-        splitFileList.innerHTML = '';
-        if (!selectedSplitFile) {
-            if (splitFileListContainer) splitFileListContainer.style.display = 'none';
-            if (splitResultCard) splitResultCard.style.display = 'none';
-            return;
-        }
-
-        const li = document.createElement('li');
-        li.innerHTML = `
-            <div class="file-info">
-                <i class="fa-regular fa-file-excel"></i>
-                <div>
-                    <div class="file-name" title="${selectedSplitFile.name}">${selectedSplitFile.name}</div>
-                    <span class="file-size">${formatBytes(selectedSplitFile.size)}</span>
-                </div>
-            </div>
-            <button class="remove-file-btn" id="removeSplitFileBtn"><i class="fa-solid fa-xmark"></i></button>
-        `;
-        
-        li.querySelector('#removeSplitFileBtn').addEventListener('click', () => {
-            selectedSplitFile = null;
-            updateSplitFileUI();
-            if (splitFileInput) splitFileInput.value = '';
-        });
-        
-        splitFileList.appendChild(li);
-        if (splitFileListContainer) splitFileListContainer.style.display = 'block';
-    }
-
-    if (splitClearBtn) {
-        splitClearBtn.addEventListener('click', () => {
-            selectedSplitFile = null;
-            updateSplitFileUI();
-            if (splitFileInput) splitFileInput.value = '';
-        });
-    }
-
-    if (splitProcessBtn) {
-        splitProcessBtn.addEventListener('click', async () => {
-            if (!selectedSplitFile) return;
-
-            const splitOption = document.querySelector('input[name="splitOption"]:checked').value;
-
-            const formData = new FormData();
-            formData.append('file', selectedSplitFile);
-            formData.append('option', splitOption);
-
-            showLoader("Splitting spreadsheet by criteria...");
-            if (splitResultCard) splitResultCard.style.display = 'none';
+            masterBtn.disabled = true;
+            const originalHTML = masterBtn.innerHTML;
+            masterBtn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Processing ${activeOptions.length} Option(s)...`;
 
             try {
-                const response = await fetch('/api/split', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Server processing error.');
-
-                hideLoader();
-
-                splitZipFilename = data.zip_filename || 'Split_Files.zip';
-                if (splitSuccessMessage) {
-                    splitSuccessMessage.textContent = `Successfully split file into ${data.files_count} separate sheets!`;
+                for (const opt of activeOptions) {
+                    const btn = document.getElementById(`splitProcessBtn${opt}`);
+                    if (btn) {
+                        btn.click();
+                        await new Promise(r => setTimeout(r, 600));
+                    }
                 }
-                
-                // Populate Log Table
-                renderSplitLogTable(data.log);
-
-                if (splitResultCard) {
-                    splitResultCard.style.display = 'block';
-                    splitResultCard.scrollIntoView({ behavior: 'smooth' });
-                }
-
-            } catch (error) {
-                hideLoader();
-                alert(`Error during splitting: ${error.message}`);
+            } finally {
+                setTimeout(() => {
+                    masterBtn.disabled = false;
+                    masterBtn.innerHTML = originalHTML;
+                }, 1500);
             }
         });
     }
 
-    function renderSplitLogTable(logs) {
-        if (!splitLogBody) return;
-        splitLogBody.innerHTML = '';
-        if (logs.length === 0) {
-            splitLogBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No split files generated.</td></tr>';
+    // ----------------------------------------------------
+    // RESTORE ALL SPLIT SESSIONS ON PAGE LOAD (1-HOUR)
+    // ----------------------------------------------------
+    async function restoreAllSplitSessionsIfValid() {
+        const now = Date.now();
+        for (const opt of ['1', '2', '3', '4']) {
+            try {
+                const s = await getSplitSession(opt);
+                if (!s) continue;
+
+                if (!s.expiresAt || now > s.expiresAt) {
+                    await clearSplitSession(opt);
+                    continue;
+                }
+
+                let zipInstance = null;
+                if (s.blob) {
+                    try {
+                        zipInstance = await JSZip.loadAsync(s.blob);
+                    } catch(e) {
+                        console.warn(`Error loading zip for split opt ${opt}:`, e);
+                    }
+                }
+
+                splitSessions[opt] = {
+                    blob: s.blob || null,
+                    zipInstance: zipInstance,
+                    logs: s.log || [],
+                    filename: s.filename || `Split_Option_${opt}.zip`,
+                    expiresAt: s.expiresAt,
+                    fileMeta: s.fileMeta || null
+                };
+
+                // Restore selected file meta in this option's card
+                if (s.fileMeta) {
+                    selectedSplitFiles[opt] = {
+                        name: s.fileMeta.name,
+                        size: s.fileMeta.size
+                    };
+                    const fileName = document.getElementById(`splitFileName${opt}`);
+                    const fileSize = document.getElementById(`splitFileSize${opt}`);
+                    const fileInfo = document.getElementById(`splitFileInfo${opt}`);
+                    if (fileName) fileName.textContent = s.fileMeta.name;
+                    if (fileSize) fileSize.textContent = formatBytes(s.fileMeta.size);
+                    if (fileInfo) fileInfo.style.display = 'flex';
+                }
+
+                // Restore result card & timer badge
+                const resultCard = document.getElementById(`splitResult${opt}`);
+                const successMsg = document.getElementById(`splitSuccessMsg${opt}`);
+                const timerBadge = document.getElementById(`splitTimer${opt}`);
+
+                const remainingMins = Math.max(1, Math.round((s.expiresAt - now) / 60000));
+                if (successMsg) successMsg.textContent = `Generated ${s.log ? s.log.length : 0} separate file(s)!`;
+                if (timerBadge) {
+                    timerBadge.innerHTML = `<i class="fa-regular fa-clock"></i> ${remainingMins} min remaining`;
+                }
+                if (resultCard) {
+                    resultCard.style.display = 'block';
+                }
+
+            } catch (err) {
+                console.error(`Error restoring split session ${opt}:`, err);
+            }
+        }
+    }
+
+    restoreAllSplitSessionsIfValid();
+
+    // ----------------------------------------------------
+    // FULL VIEW MODAL & FILE ACTIONS FOR SPLIT
+    // ----------------------------------------------------
+    function renderSplitFullViewTable(opt, filterText = '') {
+        if (!splitFullViewTableBody) return;
+        splitFullViewTableBody.innerHTML = '';
+
+        const session = splitSessions[opt];
+        const logs = session ? session.logs : [];
+
+        if (splitFullViewTitle) {
+            splitFullViewTitle.textContent = `Split Files - Option ${opt} (${SPLIT_OPTIONS[opt].tag})`;
+        }
+
+        // Show "Move to Create Folder" inside Full View ONLY for Option 1
+        if (splitFullViewMoveToFolderBtn) {
+            splitFullViewMoveToFolderBtn.style.display = (opt === '1') ? 'inline-flex' : 'none';
+        }
+
+        if (!logs || logs.length === 0) {
+            splitFullViewTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 30px; color: #94a3b8;">No split files available for Option ' + opt + '.</td></tr>';
+            if (splitFullViewCountBadge) splitFullViewCountBadge.textContent = '0 Files';
             return;
         }
 
-        logs.forEach(log => {
+        const lowerFilter = filterText.toLowerCase().trim();
+        let matchCount = 0;
+
+        logs.forEach((log, index) => {
+            if (lowerFilter) {
+                const matchName = log.filename && log.filename.toLowerCase().includes(lowerFilter);
+                const matchKey = log.key && log.key.toLowerCase().includes(lowerFilter);
+                if (!matchName && !matchKey) return;
+            }
+
+            matchCount++;
             const tr = document.createElement('tr');
-            
-            const tdName = document.createElement('td');
-            tdName.textContent = log.filename;
-            tdName.title = log.filename;
-            tdName.className = 'col-highlight';
-            
-            const tdKey = document.createElement('td');
-            tdKey.textContent = log.key;
-            tdKey.title = log.key;
-            
-            const tdId = document.createElement('td');
-            tdId.textContent = log.index;
 
-            tr.appendChild(tdName);
-            tr.appendChild(tdKey);
-            tr.appendChild(tdId);
-            splitLogBody.appendChild(tr);
+            tr.innerHTML = `
+                <td style="text-align: center; color: #64748b; font-weight: 600;">${index + 1}</td>
+                <td class="col-highlight" style="font-weight: 700; color: #1e293b;" title="${log.filename}">${log.filename}</td>
+                <td style="color: #475569;" title="${log.key}">${log.key}</td>
+                <td style="text-align: center; color: #64748b;">${log.index}</td>
+                <td>
+                    <div class="action-buttons-group" style="justify-content: center;">
+                        <button type="button" class="btn-action btn-action-view" data-filename="${log.filename}" title="View first 50 rows">
+                            <i class="fa-solid fa-eye"></i> View
+                        </button>
+                        <button type="button" class="btn-action btn-action-edit" data-index="${index}" data-filename="${log.filename}" title="Edit filename">
+                            <i class="fa-solid fa-pen-to-square"></i> Edit
+                        </button>
+                        <button type="button" class="btn-action btn-action-delete" data-index="${index}" data-filename="${log.filename}" title="Delete file">
+                            <i class="fa-solid fa-trash-can"></i> Delete
+                        </button>
+                    </div>
+                </td>
+            `;
+
+            tr.querySelector('.btn-action-view').addEventListener('click', () => {
+                viewSplitExcelFile50Rows(log.filename);
+            });
+
+            tr.querySelector('.btn-action-edit').addEventListener('click', () => {
+                openSplitEditFilenameModal(index, log.filename);
+            });
+
+            tr.querySelector('.btn-action-delete').addEventListener('click', () => {
+                deleteSplitFile(index, log.filename);
+            });
+
+            splitFullViewTableBody.appendChild(tr);
+        });
+
+        if (splitFullViewCountBadge) {
+            splitFullViewCountBadge.textContent = matchCount === logs.length
+                ? `${logs.length} Files`
+                : `${matchCount} / ${logs.length} Files`;
+        }
+    }
+
+    // View first 50 rows for split file
+    async function viewSplitExcelFile50Rows(filename) {
+        const session = splitSessions[currentSplitOption];
+        if (!session || !session.zipInstance) {
+            alert('File package is not loaded in memory. Please re-run the split.');
+            return;
+        }
+
+        const fileEntry = session.zipInstance.file(filename);
+        if (!fileEntry) {
+            alert(`File "${filename}" not found in current split package.`);
+            return;
+        }
+
+        showLoader(`Loading preview for ${filename}...`);
+        try {
+            const arrayBuffer = await fileEntry.async('arraybuffer');
+            if (!window.XLSX) throw new Error('XLSX parser library not loaded.');
+
+            const workbook = XLSX.read(arrayBuffer, { type: 'array', sheetRows: 51 });
+            const sheetName = workbook.SheetNames[0];
+            const sheet = workbook.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+            hideLoader();
+
+            if (excelPreviewThead) excelPreviewThead.innerHTML = '';
+            if (excelPreviewTbody) excelPreviewTbody.innerHTML = '';
+
+            if (!rows || rows.length === 0) {
+                if (excelPreviewTbody) excelPreviewTbody.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 20px;">Sheet is empty.</td></tr>';
+            } else {
+                const headerRow = rows[0];
+                const trHead = document.createElement('tr');
+                const thNum = document.createElement('th');
+                thNum.className = 'excel-row-num';
+                thNum.textContent = '#';
+                trHead.appendChild(thNum);
+
+                headerRow.forEach((colName, colIdx) => {
+                    const th = document.createElement('th');
+                    th.textContent = colName !== undefined && colName !== null && colName !== '' ? colName : `Col ${colIdx + 1}`;
+                    trHead.appendChild(th);
+                });
+                if (excelPreviewThead) excelPreviewThead.appendChild(trHead);
+
+                const dataRows = rows.slice(1, 51);
+                dataRows.forEach((row, rowIdx) => {
+                    const tr = document.createElement('tr');
+                    const tdNum = document.createElement('td');
+                    tdNum.className = 'excel-row-num';
+                    tdNum.textContent = rowIdx + 1;
+                    tr.appendChild(tdNum);
+
+                    for (let c = 0; c < headerRow.length; c++) {
+                        const td = document.createElement('td');
+                        const val = row[c];
+                        td.textContent = val !== undefined && val !== null ? val : '';
+                        td.title = td.textContent;
+                        tr.appendChild(td);
+                    }
+                    if (excelPreviewTbody) excelPreviewTbody.appendChild(tr);
+                });
+            }
+
+            if (excelPreviewModalTitle) excelPreviewModalTitle.textContent = filename;
+            if (excelPreviewSheetName) excelPreviewSheetName.textContent = `Sheet: ${sheetName || 'Sheet1'} • Displaying first ${Math.min(50, Math.max(0, rows.length - 1))} rows (Lag-Free)`;
+            if (renameExcelPreviewModal) renameExcelPreviewModal.style.display = 'flex';
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error previewing split file:', err);
+            alert('Failed to preview file: ' + err.message);
+        }
+    }
+
+    // Open Edit Filename Modal for Split file
+    function openSplitEditFilenameModal(index, filename) {
+        editingSplitLogIndex = index;
+        editingSplitOriginalFilename = filename;
+
+        const lastDot = filename.lastIndexOf('.');
+        const stem = lastDot !== -1 ? filename.slice(0, lastDot) : filename;
+        const ext = lastDot !== -1 ? filename.slice(lastDot) : '';
+
+        if (editFilenameInput) editFilenameInput.value = stem;
+        if (editFilenameExtBadge) editFilenameExtBadge.textContent = ext;
+        if (editFilenameError) editFilenameError.style.display = 'none';
+
+        if (editFilenameSaveBtn) {
+            editFilenameSaveBtn.onclick = saveSplitEditedFilename;
+        }
+
+        if (renameEditFilenameModal) {
+            renameEditFilenameModal.style.display = 'flex';
+            setTimeout(() => {
+                if (editFilenameInput) {
+                    editFilenameInput.focus();
+                    editFilenameInput.select();
+                }
+            }, 100);
+        }
+    }
+
+    // Save Edited Filename for Split
+    async function saveSplitEditedFilename() {
+        const opt = currentSplitOption;
+        const session = splitSessions[opt];
+        if (!session) return;
+
+        const newStem = editFilenameInput.value.trim();
+        const ext = editFilenameExtBadge.textContent;
+
+        if (!newStem) {
+            editFilenameError.textContent = 'Filename cannot be empty.';
+            editFilenameError.style.display = 'block';
+            return;
+        }
+
+        if (/[\\/:*?"<>|]/.test(newStem)) {
+            editFilenameError.textContent = 'Filename cannot contain \\ / : * ? " < > |';
+            editFilenameError.style.display = 'block';
+            return;
+        }
+
+        const newFullName = newStem + ext;
+        if (newFullName === editingSplitOriginalFilename) {
+            renameEditFilenameModal.style.display = 'none';
+            return;
+        }
+
+        const exists = session.logs.some((l, idx) => idx !== editingSplitLogIndex && l.filename.toLowerCase() === newFullName.toLowerCase());
+        if (exists) {
+            editFilenameError.textContent = `A file named "${newFullName}" already exists in this package.`;
+            editFilenameError.style.display = 'block';
+            return;
+        }
+
+        showLoader('Updating filename in ZIP...');
+        try {
+            if (session.zipInstance) {
+                const oldEntry = session.zipInstance.file(editingSplitOriginalFilename);
+                if (oldEntry) {
+                    const data = await oldEntry.async('uint8array');
+                    session.zipInstance.file(newFullName, data);
+                    session.zipInstance.remove(editingSplitOriginalFilename);
+                    session.blob = await session.zipInstance.generateAsync({ type: 'blob' });
+                }
+            }
+
+            if (session.logs[editingSplitLogIndex]) {
+                session.logs[editingSplitLogIndex].filename = newFullName;
+            }
+
+            // Save to IndexedDB
+            await saveSplitSession(opt, {
+                timestamp: Date.now(),
+                expiresAt: session.expiresAt,
+                filename: session.filename,
+                log: session.logs,
+                fileMeta: session.fileMeta,
+                blob: session.blob
+            });
+
+            hideLoader();
+            renameEditFilenameModal.style.display = 'none';
+
+            // Refresh Full View table
+            renderSplitFullViewTable(opt, splitFullViewSearchInput ? splitFullViewSearchInput.value : '');
+
+            showCustomAlert('Filename Updated', `File renamed to "${newFullName}" successfully!`, 'success');
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error renaming split file:', err);
+            alert('Failed to rename file: ' + err.message);
+        }
+    }
+
+    // Delete Split File
+    async function deleteSplitFile(index, filename) {
+        const opt = currentSplitOption;
+        const session = splitSessions[opt];
+        if (!session) return;
+
+        if (!confirm(`Are you sure you want to delete "${filename}" from this package?`)) {
+            return;
+        }
+
+        showLoader(`Deleting ${filename}...`);
+        try {
+            if (session.zipInstance) {
+                session.zipInstance.remove(filename);
+                session.blob = await session.zipInstance.generateAsync({ type: 'blob' });
+            }
+
+            session.logs.splice(index, 1);
+
+            await saveSplitSession(opt, {
+                timestamp: Date.now(),
+                expiresAt: session.expiresAt,
+                filename: session.filename,
+                log: session.logs,
+                fileMeta: session.fileMeta,
+                blob: session.blob
+            });
+
+            hideLoader();
+
+            const resultCard = document.getElementById(`splitResult${opt}`);
+            const successMsg = document.getElementById(`splitSuccessMsg${opt}`);
+
+            if (session.logs.length === 0) {
+                if (resultCard) resultCard.style.display = 'none';
+                if (splitFullViewModal) splitFullViewModal.style.display = 'none';
+                await clearSplitSession(opt);
+                showCustomAlert('Package Empty', 'All files have been removed from this package.', 'warning');
+                return;
+            }
+
+            if (successMsg) successMsg.textContent = `Generated ${session.logs.length} separate file(s)!`;
+            renderSplitFullViewTable(opt, splitFullViewSearchInput ? splitFullViewSearchInput.value : '');
+
+            showCustomAlert('File Deleted', `"${filename}" was removed from the package.`, 'success');
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error deleting split file:', err);
+            alert('Failed to delete file: ' + err.message);
+        }
+    }
+
+    // Move to Create Folder (ONLY FOR OPTION 1: SIMPLE)
+    async function moveSplitFilesToCreateFolder() {
+        const session = splitSessions['1'];
+        if (!session || (!session.zipInstance && !session.blob)) {
+            alert('No files available in Option 1 (SIMPLE). Please run Option 1 split first.');
+            return;
+        }
+
+        showLoader('Moving Option 1 files to Create Folder...');
+        try {
+            let zip = session.zipInstance;
+            if (!zip && session.blob) {
+                zip = await JSZip.loadAsync(session.blob);
+                session.zipInstance = zip;
+            }
+
+            const filesToMove = [];
+            for (const [fname, entry] of Object.entries(zip.files)) {
+                if (!entry.dir) {
+                    const blob = await entry.async('blob');
+                    const file = new File([blob], fname, {
+                        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        lastModified: Date.now()
+                    });
+                    file.customRelativePath = fname;
+                    filesToMove.push(file);
+                }
+            }
+
+            if (filesToMove.length === 0) {
+                hideLoader();
+                alert('No files found to move.');
+                return;
+            }
+
+            const modeFilesBtn2 = document.getElementById('fcModeFilesBtn') || document.getElementById('folderModeFilesBtn');
+            if (folderMode !== 'files' && modeFilesBtn2) {
+                modeFilesBtn2.click();
+            }
+
+            filesToMove.forEach(newFile => {
+                const existingIdx = selectedFolderFiles.findIndex(f => f.name === newFile.name);
+                if (existingIdx !== -1) {
+                    selectedFolderFiles[existingIdx] = newFile;
+                } else {
+                    selectedFolderFiles.push(newFile);
+                }
+            });
+            fcFiles = selectedFolderFiles;
+
+            updateFolderFilesListUI();
+
+            hideLoader();
+
+            if (splitFullViewModal) splitFullViewModal.style.display = 'none';
+
+            if (tabFolderBtn) {
+                tabFolderBtn.click();
+            }
+
+            setTimeout(() => {
+                const targetEl = document.getElementById('fcSelectedFilesCard') || document.getElementById('fcDropzone');
+                if (targetEl && targetEl.style.display !== 'none') {
+                    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    const dropzone = document.getElementById('fcDropzone');
+                    if (dropzone) dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }, 150);
+
+            showCustomAlert(
+                'Moved to Create Folder',
+                `${filesToMove.length} Option 1 split file(s) have been successfully added to Create Folder!`,
+                'success'
+            );
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error moving split files to Create Folder:', err);
+            alert('Failed to move files: ' + err.message);
+        }
+    }
+
+    // Trigger Split Download for a given option
+    async function triggerSplitDownloadForOption(opt) {
+        const session = splitSessions[opt];
+        if (session && session.zipInstance) {
+            try {
+                showLoader('Preparing download...');
+                const blob = await session.zipInstance.generateAsync({ type: 'blob' });
+                hideLoader();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = session.filename || `Split_Option_${opt}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                return;
+            } catch(e) {
+                hideLoader();
+                console.warn('Client zip generation fallback to server:', e);
+            }
+        }
+        window.location.href = `/api/download-split?option=${opt}&filename=${encodeURIComponent(session ? session.filename : 'Split_Files.zip')}`;
+    }
+
+    // Modal listeners for Split Full View
+    if (splitFullViewCloseBtn) {
+        splitFullViewCloseBtn.addEventListener('click', () => {
+            if (splitFullViewModal) splitFullViewModal.style.display = 'none';
         });
     }
 
-    if (splitDownloadBtn) {
-        splitDownloadBtn.addEventListener('click', () => {
-            const url = `/api/download-split?filename=${encodeURIComponent(splitZipFilename)}`;
-            window.location.href = url;
+    if (splitFullViewSearchInput) {
+        splitFullViewSearchInput.addEventListener('input', (e) => {
+            renderSplitFullViewTable(currentSplitOption, e.target.value);
         });
     }
 
-    // ====================================================
-    // TAB 4: CREATE FOLDER LOGIC (GROUP & ZIP)
-    // ====================================================
-    const folderDropzone = document.getElementById('folderDropzone');
-    const folderFileInput = document.getElementById('folderFileInput');
-    const folderFolderInput = document.getElementById('folderFolderInput');
-    const folderModeFilesBtn = document.getElementById('folderModeFilesBtn');
-    const folderModeFoldersBtn = document.getElementById('folderModeFoldersBtn');
-    const folderHeaderTitle = document.getElementById('folderHeaderTitle');
-    const folderUploadDesc = document.getElementById('folderUploadDesc');
-    const folderDropzoneTitle = document.getElementById('folderDropzoneTitle');
-    const folderBrowseBtn = document.getElementById('folderBrowseBtn');
-    const folderUploadIcon = document.getElementById('folderUploadIcon');
-    
-    const folderFileList = document.getElementById('folderFileList');
-    const folderFileListContainer = document.getElementById('folderFileListContainer');
-    const folderFileCountSpan = document.getElementById('folderFileCount');
-    const folderClearAllBtn = document.getElementById('folderClearBtn');
-    const folderProcessBtn = document.getElementById('folderProcessBtn');
-    const folderResultCard = document.getElementById('folderResultCard');
-    const folderSuccessMessage = document.getElementById('folderSuccessMessage');
-    const folderDownloadBtn = document.getElementById('folderDownloadBtn');
-    const folderLogBody = document.getElementById('folderLogBody');
+    if (splitFullViewDownloadBtn) {
+        splitFullViewDownloadBtn.addEventListener('click', () => {
+            triggerSplitDownloadForOption(currentSplitOption);
+        });
+    }
 
-    let selectedFolderFiles = [];
-    let folderZipFilename = 'Grouped_Folders.zip';
-    let folderMode = 'files'; // 'files' or 'folders'
+    if (splitFullViewMoveToFolderBtn) {
+        splitFullViewMoveToFolderBtn.addEventListener('click', moveSplitFilesToCreateFolder);
+    }
 
-    // Initialize folder input display as hidden by default
-    if (folderFolderInput) folderFolderInput.style.display = 'none';
+    // ====================================================
+    // TAB 4: ADVANCED FOLDER CREATE (STRICT 3-FILE RULE)
+    // ====================================================
+    // Elements and local references (state variables declared at top of script)
+    const folderModeFilesBtn = document.getElementById('fcModeFilesBtn');
+
+    // Elements
+    const fcModeFilesBtn = document.getElementById('fcModeFilesBtn');
+    const fcModeFoldersBtn = document.getElementById('fcModeFoldersBtn');
+    const fcUploadTitle = document.getElementById('fcUploadTitle');
+    const fcUploadDesc = document.getElementById('fcUploadDesc');
+    const fcDropzone = document.getElementById('fcDropzone');
+    const fcFileInput = document.getElementById('fcFileInput');
+    const fcFolderInput = document.getElementById('fcFolderInput');
+    const fcFileDisplay = document.getElementById('fcFileDisplay');
+    const fcSelectedFilesCard = document.getElementById('fcSelectedFilesCard');
+    const fcUploadedFileList = document.getElementById('fcUploadedFileList');
+    const fcSelectedCount = document.getElementById('fcSelectedCount');
+    const clearFcFilesBtn = document.getElementById('clearFcFilesBtn');
+    const fcBtn = document.getElementById('fcBtn');
+
+    const fcProgressCard = document.getElementById('fcProgressCard');
+    const fcProgressBar = document.getElementById('fcProgressBar');
+    const fcProgressPercent = document.getElementById('fcProgressPercent');
+    const fcProgressStepText = document.getElementById('fcProgressStepText');
+
+    const fcOutputContainer = document.getElementById('fcOutputContainer');
+    const fcConsoleLog = document.getElementById('fcConsoleLog');
+    const clearFcLogBtn = document.getElementById('clearFcLogBtn');
+
+    // Fullscreen Modal Elements
+    const fcFullscreenModal = document.getElementById('fcFullscreenModal');
+    const modalFcTotalBadge = document.getElementById('modalFcTotalBadge');
+    const modalFcReadyBadge = document.getElementById('modalFcReadyBadge');
+    const modalFcErrorBadge = document.getElementById('modalFcErrorBadge');
+    const modalFcDownloadReportBtn = document.getElementById('modalFcDownloadReportBtn');
+    const modalFcDownloadZipBtn = document.getElementById('modalFcDownloadZipBtn');
+    const modalFcMoveToInvoiceBtn = document.getElementById('modalFcMoveToInvoiceBtn');
+    const closeFcModalBtn = document.getElementById('closeFcModalBtn');
+    const modalFcAccordionContainer = document.getElementById('modalFcAccordionContainer');
+    const modalFcSearchInput = document.getElementById('modalFcSearchInput');
+    const modalFcSummaryText = document.getElementById('modalFcSummaryText');
+    const modalFcFooterMoveToInvoiceBtn = document.getElementById('modalFcFooterMoveToInvoiceBtn');
+    const modalFcFooterCloseBtn = document.getElementById('modalFcFooterCloseBtn');
+
+    // Copy File Dialog Modal Elements
+    const fcMoveFileModal = document.getElementById('fcMoveFileModal');
+    const fcMoveSourceFileName = document.getElementById('fcMoveSourceFileName');
+    const fcMoveFoldersList = document.getElementById('fcMoveFoldersList');
+    const fcMoveSelectAllBtn = document.getElementById('fcMoveSelectAllBtn');
+    const fcMoveDeselectAllBtn = document.getElementById('fcMoveDeselectAllBtn');
+    const fcMoveSearchInput = document.getElementById('fcMoveSearchInput');
+    const fcMoveCancelBtn = document.getElementById('fcMoveCancelBtn');
+    const fcMoveConfirmBtn = document.getElementById('fcMoveConfirmBtn');
+    let fcSourceFileForCopy = null;
+    let fcSourcePrefixForCopy = null;
+
+    function appendFcLog(msg, type = 'info') {
+        if (!fcConsoleLog) return;
+        const time = new Date().toLocaleTimeString();
+        const line = document.createElement('div');
+        line.className = `log-line ${type}`;
+        line.textContent = `[${time}] ${msg}`;
+        fcConsoleLog.appendChild(line);
+        fcConsoleLog.scrollTop = fcConsoleLog.scrollHeight;
+    }
+
+    if (clearFcLogBtn) {
+        clearFcLogBtn.addEventListener('click', () => {
+            if (fcConsoleLog) fcConsoleLog.innerHTML = '';
+        });
+    }
 
     function checkIsMergedFile(file) {
-        return file.name.toUpperCase().includes('FLIPKART_MERGED_ORDERS');
+        return (file.name || '').toUpperCase().includes('FLIPKART_MERGED_ORDERS');
     }
 
-    // Helper to recursively traverse dragged folders and get files
+    // Recursive directory reader
     async function getFilesFromDataTransfer(dataTransfer) {
         const files = [];
-        
         const readDirectory = (dirEntry) => {
             return new Promise((resolve) => {
                 const reader = dirEntry.createReader();
                 const allEntries = [];
-                
                 const readEntries = () => {
                     reader.readEntries((entries) => {
                         if (entries.length === 0) {
@@ -954,13 +2594,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 readEntries();
             });
         };
-        
         const getFile = (fileEntry) => {
             return new Promise((resolve) => {
                 fileEntry.file((file) => resolve(file), () => resolve(null));
             });
         };
-        
         const traverse = async (entry, path = "") => {
             if (entry.isFile) {
                 const file = await getFile(entry);
@@ -976,23 +2614,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
         };
-        
         const items = dataTransfer.items;
         const entries = [];
-        
         if (items) {
             for (let i = 0; i < items.length; i++) {
                 try {
                     const entry = items[i].webkitGetAsEntry();
-                    if (entry) {
-                        entries.push(entry);
-                    }
+                    if (entry) entries.push(entry);
                 } catch (err) {
                     console.warn(err);
                 }
             }
         }
-        
         if (entries.length > 0) {
             for (const entry of entries) {
                 await traverse(entry);
@@ -1007,330 +2640,1366 @@ document.addEventListener('DOMContentLoaded', () => {
         return files;
     }
 
-    function switchFolderMode(mode) {
-        if (folderMode === mode) return;
+    // Switch between Group Files and Process Folders
+    function switchFcMode(mode) {
+        if (fcMode === mode) return;
+        fcMode = mode;
         folderMode = mode;
-        
-        selectedFolderFiles = [];
-        if (folderFileInput) folderFileInput.value = '';
-        if (folderFolderInput) folderFolderInput.value = '';
-        
-        if (folderFileListContainer) folderFileListContainer.style.display = 'none';
-        if (folderResultCard) folderResultCard.style.display = 'none';
-        
+        fcFiles = [];
+        selectedFolderFiles = fcFiles;
+        if (fcFileInput) fcFileInput.value = '';
+        if (fcFolderInput) fcFolderInput.value = '';
+
         if (mode === 'files') {
-            if (folderFileInput) folderFileInput.style.display = 'block';
-            if (folderFolderInput) folderFolderInput.style.display = 'none';
-            if (folderModeFilesBtn) folderModeFilesBtn.classList.add('active');
-            if (folderModeFoldersBtn) folderModeFoldersBtn.classList.remove('active');
-            if (folderHeaderTitle) folderHeaderTitle.innerText = "Upload Files to Group";
-            if (folderUploadDesc) folderUploadDesc.innerText = "Drag & drop your files (including Merged file & prefix renamed files) together.";
-            if (folderDropzoneTitle) folderDropzoneTitle.innerText = "Drag & drop your files here";
-            if (folderBrowseBtn) folderBrowseBtn.innerText = "Browse Files";
-            if (folderUploadIcon) {
-                folderUploadIcon.className = "fa-solid fa-folder-plus upload-icon";
-                folderUploadIcon.style.color = "var(--primary)";
-            }
+            if (fcModeFilesBtn) fcModeFilesBtn.classList.add('active');
+            if (fcModeFoldersBtn) fcModeFoldersBtn.classList.remove('active');
+            if (fcUploadTitle) fcUploadTitle.textContent = "Select Files to Group (3 Files Rule)";
+            if (fcUploadDesc) fcUploadDesc.textContent = "Drag & drop all files (including Merged file & prefix sheets) together.";
+            if (fcFileDisplay) fcFileDisplay.innerHTML = 'Drag & drop files here or <span class="browse-link">Browse Files</span>';
         } else {
-            if (folderFileInput) folderFileInput.style.display = 'none';
-            if (folderFolderInput) folderFolderInput.style.display = 'block';
-            if (folderModeFilesBtn) folderModeFilesBtn.classList.remove('active');
-            if (folderModeFoldersBtn) folderModeFoldersBtn.classList.add('active');
-            if (folderHeaderTitle) folderHeaderTitle.innerText = "Upload Folders Directly";
-            if (folderUploadDesc) folderUploadDesc.innerText = "Drag & drop your grouped folders here to verify and package.";
-            if (folderDropzoneTitle) folderDropzoneTitle.innerText = "Drag & drop your folders here";
-            if (folderBrowseBtn) folderBrowseBtn.innerText = "Browse Folders";
-            if (folderUploadIcon) {
-                folderUploadIcon.className = "fa-solid fa-folder-open upload-icon";
-                folderUploadIcon.style.color = "var(--success)";
-            }
+            if (fcModeFilesBtn) fcModeFilesBtn.classList.remove('active');
+            if (fcModeFoldersBtn) fcModeFoldersBtn.classList.add('active');
+            if (fcUploadTitle) fcUploadTitle.textContent = "Upload Folders Directly (3 Files Rule)";
+            if (fcUploadDesc) fcUploadDesc.textContent = "Drag & drop whole folders here to verify 3 files per folder and package.";
+            if (fcFileDisplay) fcFileDisplay.innerHTML = 'Drag & drop folders here or <span class="browse-link">Browse Folders</span>';
         }
-        updateFolderFilesListUI();
+        updateFcUploadedFileListUI();
+        appendFcLog(`Switched mode to: ${mode === 'files' ? 'Group Files by Prefix' : 'Process Folders Directly'}`);
     }
 
-    if (folderModeFilesBtn) {
-        folderModeFilesBtn.addEventListener('click', () => switchFolderMode('files'));
-    }
-    if (folderModeFoldersBtn) {
-        folderModeFoldersBtn.addEventListener('click', () => switchFolderMode('folders'));
-    }
+    if (fcModeFilesBtn) fcModeFilesBtn.addEventListener('click', () => switchFcMode('files'));
+    if (fcModeFoldersBtn) fcModeFoldersBtn.addEventListener('click', () => switchFcMode('folders'));
 
-    if (folderDropzone) {
-        ['dragenter', 'dragover'].forEach(eventName => {
-            folderDropzone.addEventListener(eventName, (e) => {
+    // Dropzone listeners
+    if (fcDropzone) {
+        ['dragenter', 'dragover'].forEach(evt => {
+            fcDropzone.addEventListener(evt, (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                folderDropzone.classList.add('dragover');
-            }, false);
+                fcDropzone.classList.add('dragover');
+            });
         });
 
-        ['dragleave', 'drop'].forEach(eventName => {
-            folderDropzone.addEventListener(eventName, (e) => {
+        ['dragleave', 'drop'].forEach(evt => {
+            fcDropzone.addEventListener(evt, (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                folderDropzone.classList.remove('dragover');
-            }, false);
+                fcDropzone.classList.remove('dragover');
+            });
         });
 
-        folderDropzone.addEventListener('click', (e) => {
-            if (e.target === folderFileInput || e.target === folderFolderInput) return;
-            if (folderMode === 'files') {
-                if (folderFileInput) folderFileInput.click();
+        fcDropzone.addEventListener('click', (e) => {
+            if (e.target === fcFileInput || e.target === fcFolderInput) return;
+            if (fcMode === 'files') {
+                if (fcFileInput) fcFileInput.click();
             } else {
-                if (folderFolderInput) folderFolderInput.click();
+                if (fcFolderInput) fcFolderInput.click();
             }
         });
-        
-        folderDropzone.addEventListener('drop', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            folderDropzone.classList.remove('dragover');
-            
+
+        fcDropzone.addEventListener('drop', async (e) => {
             let files = [];
-            if (folderMode === 'files') {
-                if (e.dataTransfer.files.length > 0) {
-                    files = Array.from(e.dataTransfer.files);
-                }
+            if (fcMode === 'files') {
+                if (e.dataTransfer.files.length > 0) files = Array.from(e.dataTransfer.files);
             } else {
                 files = await getFilesFromDataTransfer(e.dataTransfer);
             }
-            
-            if (files.length > 0) {
-                handleFolderFilesSelection(files);
-            }
+            if (files.length > 0) handleFcFilesSelection(files);
         });
     }
 
-    if (folderFileInput) {
-        folderFileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFolderFilesSelection(Array.from(e.target.files));
-            }
+    if (fcFileInput) {
+        fcFileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFcFilesSelection(Array.from(e.target.files));
         });
     }
 
-    if (folderFolderInput) {
-        folderFolderInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                handleFolderFilesSelection(Array.from(e.target.files));
-            }
+    if (fcFolderInput) {
+        fcFolderInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFcFilesSelection(Array.from(e.target.files));
         });
     }
 
-    function handleFolderFilesSelection(files) {
+    function handleFcFilesSelection(files) {
+        let addedCount = 0;
         for (let i = 0; i < files.length; i++) {
             const file = files[i];
             const ext = file.name.split('.').pop().toLowerCase();
             const isSystemFile = file.name.startsWith('.') || file.name.startsWith('~') || file.name === "Thumbs.db";
-            
-            if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
-                alert(`File "${file.name}" is not supported (supports Excel/CSV) and was skipped.`);
-                continue;
-            }
-            if (isSystemFile) {
-                continue;
-            }
 
-            if (folderMode === 'files') {
-                const isDuplicate = selectedFolderFiles.some(f => f.name === file.name && f.size === file.size);
+            if (ext !== 'xlsx' && ext !== 'xls' && ext !== 'csv') {
+                continue;
+            }
+            if (isSystemFile) continue;
+
+            if (fcMode === 'files') {
+                const isDuplicate = fcFiles.some(f => f.name === file.name && f.size === file.size);
                 if (!isDuplicate) {
                     file.customRelativePath = file.name;
-                    selectedFolderFiles.push(file);
+                    file.id = 'fc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+                    fcFiles.push(file);
+                    addedCount++;
                 }
             } else {
                 const relativePath = file.customRelativePath || file.webkitRelativePath || file.name;
                 const normalizedPath = relativePath.replace(/\\/g, '/');
                 const pathParts = normalizedPath.split('/');
-                
                 if (pathParts.length > 1) {
                     const folderName = pathParts[pathParts.length - 2];
                     const cleanRelativePath = `${folderName}/${file.name}`;
-                    
-                    const isDuplicate = selectedFolderFiles.some(f => f.customRelativePath === cleanRelativePath && f.size === file.size);
+                    const isDuplicate = fcFiles.some(f => f.customRelativePath === cleanRelativePath && f.size === file.size);
                     if (!isDuplicate) {
                         file.customRelativePath = cleanRelativePath;
                         file.folderName = folderName;
-                        selectedFolderFiles.push(file);
+                        file.id = 'fc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+                        fcFiles.push(file);
+                        addedCount++;
                     }
-                } else {
-                    alert(`File "${file.name}" was skipped because it is not inside an uploaded folder.`);
                 }
             }
         }
-        updateFolderFilesListUI();
+        selectedFolderFiles = fcFiles;
+        updateFcUploadedFileListUI();
+        if (addedCount > 0) {
+            appendFcLog(`Added ${addedCount} file(s) to selection.`);
+        }
     }
 
-    function updateFolderFilesListUI() {
-        if (!folderFileList) return;
-        folderFileList.innerHTML = '';
-        if (folderFileCountSpan) folderFileCountSpan.textContent = selectedFolderFiles.length;
+    function updateFcUploadedFileListUI() {
+        if (!fcUploadedFileList) return;
+        fcUploadedFileList.innerHTML = '';
+        if (fcSelectedCount) fcSelectedCount.textContent = fcFiles.length;
 
-        if (selectedFolderFiles.length === 0) {
-            if (folderFileListContainer) folderFileListContainer.style.display = 'none';
-            if (folderResultCard) folderResultCard.style.display = 'none';
+        if (fcFiles.length === 0) {
+            if (fcSelectedFilesCard) fcSelectedFilesCard.style.display = 'none';
+            if (fcBtn) fcBtn.disabled = true;
             return;
         }
 
-        selectedFolderFiles.forEach((file, index) => {
-            let isMerged = false;
-            let tagText = 'Prefix File';
-            let tagClass = 'tag-rename';
-
-            if (folderMode === 'files') {
-                isMerged = checkIsMergedFile(file);
-                tagClass = isMerged ? 'tag-mapping' : 'tag-rename';
-                tagText = isMerged ? 'Merged File' : 'Prefix File';
-            } else {
-                isMerged = checkIsMergedFile(file);
-                tagClass = isMerged ? 'tag-mapping' : 'tag-rename';
-                tagText = isMerged ? `Folder: ${file.folderName} (Merged)` : `Folder: ${file.folderName}`;
-            }
-
+        fcFiles.forEach((file, index) => {
+            const isMerged = checkIsMergedFile(file);
+            const tagClass = isMerged ? 'tag-mapping' : 'tag-rename';
+            const tagText = isMerged ? 'Merged File' : (file.folderName ? `Folder: ${file.folderName}` : 'Prefix File');
             const displayName = file.customRelativePath || file.name;
 
-            const li = document.createElement('li');
-            li.innerHTML = `
-                <div class="file-info">
-                    <i class="fa-regular fa-file-excel"></i>
+            const div = document.createElement('div');
+            div.className = 'fc-file-row';
+            div.style.padding = '6px 10px';
+            div.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;">
+                    <i class="fa-regular fa-file-excel" style="color: #059669; font-size: 1.1rem;"></i>
                     <div>
-                        <div class="file-name" title="${displayName}">
-                            ${displayName} 
-                            <span class="file-tag ${tagClass}">${tagText}</span>
+                        <div style="font-weight: 600; font-size: 0.82rem; color: #1e293b; word-break: break-all;">
+                            ${displayName}
+                            <span class="file-tag ${tagClass}" style="font-size: 0.7rem; padding: 2px 6px;">${tagText}</span>
                         </div>
-                        <span class="file-size">${formatBytes(file.size)}</span>
+                        <span style="font-size: 0.72rem; color: #64748b;">${formatBytes(file.size || 0)}</span>
                     </div>
                 </div>
-                <button class="remove-file-btn" data-index="${index}"><i class="fa-solid fa-xmark"></i></button>
+                <button type="button" class="btn-clear" data-index="${index}" style="background: none; border: none; color: #ef4444; font-size: 0.85rem; cursor: pointer;" title="Remove">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
             `;
-            
-            li.querySelector('.remove-file-btn').addEventListener('click', (e) => {
-                const idx = parseInt(e.currentTarget.getAttribute('data-index'));
-                selectedFolderFiles.splice(idx, 1);
-                updateFolderFilesListUI();
+
+            div.querySelector('.btn-clear').addEventListener('click', () => {
+                fcFiles.splice(index, 1);
+                selectedFolderFiles = fcFiles;
+                updateFcUploadedFileListUI();
             });
-            folderFileList.appendChild(li);
+
+            fcUploadedFileList.appendChild(div);
         });
 
-        if (folderFileListContainer) folderFileListContainer.style.display = 'block';
+        if (fcSelectedFilesCard) fcSelectedFilesCard.style.display = 'block';
+        if (fcBtn) fcBtn.disabled = false;
     }
 
-    if (folderClearAllBtn) {
-        folderClearAllBtn.addEventListener('click', () => {
-            selectedFolderFiles = [];
-            updateFolderFilesListUI();
-            if (folderFileInput) folderFileInput.value = '';
-            if (folderFolderInput) folderFolderInput.value = '';
+    if (clearFcFilesBtn) {
+        clearFcFilesBtn.addEventListener('click', () => {
+            fcFiles = [];
+            selectedFolderFiles = fcFiles;
+            updateFcUploadedFileListUI();
+            if (fcFileInput) fcFileInput.value = '';
+            if (fcFolderInput) fcFolderInput.value = '';
+            appendFcLog('Cleared all selected files.');
         });
     }
 
-    if (folderProcessBtn) {
-        folderProcessBtn.addEventListener('click', async () => {
-            if (selectedFolderFiles.length === 0) return;
+    // Sort helper: Error folders (< 3 files) appear FIRST!
+    function sortFolderGroups(groups) {
+        groups.sort((a, b) => {
+            // First by error state (error folders first)
+            if (a.isError && !b.isError) return -1;
+            if (!a.isError && b.isError) return 1;
 
-            if (folderMode === 'files') {
-                // Check validation: at least 1 merged file and at least 1 other file
-                const mergedFiles = selectedFolderFiles.filter(checkIsMergedFile);
-                const otherFiles = selectedFolderFiles.filter(f => !checkIsMergedFile(f));
-
-                if (mergedFiles.length !== 1) {
-                    alert(`Error: Exactly one file containing "FLIPKART_MERGED_ORDERS" in its name must be selected (you selected ${mergedFiles.length}).`);
-                    return;
-                }
-
-                if (otherFiles.length === 0) {
-                    alert(`Error: You must upload at least one other file with a prefix to move into folders.`);
-                    return;
-                }
-            } else {
-                const allFolders = new Set();
-                selectedFolderFiles.forEach(file => {
-                    if (file.folderName) allFolders.add(file.folderName);
-                });
-
-                if (allFolders.size === 0) {
-                    alert(`Error: No valid folders were detected. Please upload/drop whole folders.`);
-                    return;
-                }
+            // Then numerically/alphabetically by prefix
+            const numA = parseInt(a.prefix, 10);
+            const numB = parseInt(b.prefix, 10);
+            if (!isNaN(numA) && !isNaN(numB)) {
+                return numA - numB;
             }
+            return a.prefix.localeCompare(b.prefix, undefined, { numeric: true, sensitivity: 'base' });
+        });
+    }
 
-            const formData = new FormData();
-            formData.append('mode', folderMode);
-            
-            selectedFolderFiles.forEach(file => {
-                const filepath = file.customRelativePath || file.name;
-                formData.append('files[]', file, filepath);
-            });
+    // MAIN EXECUTION: Group & Validate Strict 3-File Rule
+    if (fcBtn) {
+        fcBtn.addEventListener('click', async () => {
+            if (fcFiles.length === 0) return;
 
-            showLoader("Processing folder creation workflow...");
-            if (folderResultCard) folderResultCard.style.display = 'none';
+            fcBtn.disabled = true;
+            if (fcProgressCard) {
+                fcProgressCard.style.display = 'block';
+                fcProgressBar.style.width = '10%';
+                fcProgressPercent.textContent = '10%';
+                fcProgressStepText.textContent = 'Analyzing and grouping files...';
+            }
+            appendFcLog('Starting Folder Create process with Strict 3-File Rule...');
 
             try {
-                const response = await fetch('/api/create-folder', {
-                    method: 'POST',
-                    body: formData
+                // Grouping
+                const groupsMap = {};
+                let commonMergedFile = null;
+
+                if (fcMode === 'files') {
+                    // Check if there is a common merged file
+                    const mergedCandidates = fcFiles.filter(checkIsMergedFile);
+                    if (mergedCandidates.length === 1 && !mergedCandidates[0].name.includes('-')) {
+                        commonMergedFile = mergedCandidates[0];
+                        appendFcLog(`Detected Common Merged File: ${commonMergedFile.name}`);
+                    }
+
+                    fcFiles.forEach(file => {
+                        if (file === commonMergedFile) return;
+
+                        // Extract prefix before first '-'
+                        let prefix = '';
+                        if (file.name.includes('-')) {
+                            prefix = file.name.split('-', 1)[0].trim();
+                        } else {
+                            prefix = 'Unassigned';
+                        }
+
+                        if (!groupsMap[prefix]) {
+                            groupsMap[prefix] = {
+                                prefix: prefix,
+                                files: [],
+                                isError: false
+                            };
+                        }
+
+                        groupsMap[prefix].files.push({
+                            id: file.id || 'f_' + Math.random().toString(36).substring(2, 9),
+                            name: file.name,
+                            size: file.size,
+                            file: file,
+                            customRelativePath: `${prefix}/${file.name}`
+                        });
+                    });
+
+                    // If common merged file exists, clone into all prefix groups
+                    if (commonMergedFile) {
+                        const prefixes = Object.keys(groupsMap);
+                        for (const p of prefixes) {
+                            const alreadyHas = groupsMap[p].files.some(f => checkIsMergedFile(f));
+                            if (!alreadyHas) {
+                                groupsMap[p].files.unshift({
+                                    id: 'm_' + p + '_' + Date.now(),
+                                    name: commonMergedFile.name,
+                                    size: commonMergedFile.size,
+                                    file: commonMergedFile,
+                                    customRelativePath: `${p}/${commonMergedFile.name}`
+                                });
+                            }
+                        }
+                    }
+                } else {
+                    // Folders mode: group by file.folderName
+                    fcFiles.forEach(file => {
+                        const prefix = file.folderName || 'Unassigned';
+                        if (!groupsMap[prefix]) {
+                            groupsMap[prefix] = {
+                                prefix: prefix,
+                                files: [],
+                                isError: false
+                            };
+                        }
+                        groupsMap[prefix].files.push({
+                            id: file.id || 'f_' + Math.random().toString(36).substring(2, 9),
+                            name: file.name,
+                            size: file.size,
+                            file: file,
+                            customRelativePath: `${prefix}/${file.name}`
+                        });
+                    });
+                }
+
+                if (fcProgressBar) {
+                    fcProgressBar.style.width = '45%';
+                    fcProgressPercent.textContent = '45%';
+                    fcProgressStepText.textContent = 'Validating 3 files per folder...';
+                }
+
+                // Strict 3-File validation
+                fcFolderGroups = Object.values(groupsMap);
+                fcFolderGroups.forEach(grp => {
+                    grp.isError = (grp.files.length !== 3);
                 });
 
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || 'Server processing error.');
+                // Sort incomplete folders to top
+                sortFolderGroups(fcFolderGroups);
 
-                hideLoader();
-
-                folderZipFilename = data.zip_filename || 'Grouped_Folders.zip';
-                if (folderSuccessMessage) {
-                    folderSuccessMessage.textContent = folderMode === 'files' ? 
-                        `Successfully created ${data.folders_count} prefix folder(s)!` :
-                        `Successfully verified and zipped ${data.folders_count} folder(s)!`;
+                if (fcProgressBar) {
+                    fcProgressBar.style.width = '75%';
+                    fcProgressPercent.textContent = '75%';
+                    fcProgressStepText.textContent = 'Generating ZIP & Missing Files Report...';
                 }
 
-                // Populate Log Table
-                renderFolderLogTable(data.log);
+                // Build JSZip in memory
+                await rebuildFcPackage(true);
 
-                if (folderResultCard) {
-                    folderResultCard.style.display = 'block';
-                    folderResultCard.scrollIntoView({ behavior: 'smooth' });
+                if (fcProgressBar) {
+                    fcProgressBar.style.width = '100%';
+                    fcProgressPercent.textContent = '100%';
+                    fcProgressStepText.textContent = 'Complete!';
                 }
 
-            } catch (error) {
-                hideLoader();
-                alert(`Error during folder creation: ${error.message}`);
+                setTimeout(() => {
+                    if (fcProgressCard) fcProgressCard.style.display = 'none';
+                }, 800);
+
+                // Render Dashboard Result Card
+                renderFcDashboardUI();
+
+                // Save session in IndexedDB (1 hour)
+                await saveFolderCreateSession();
+                startFcCountdownTimer(3600);
+
+                const totalFolders = fcFolderGroups.length;
+                const incompleteCount = fcFolderGroups.filter(f => f.isError).length;
+                const readyCount = totalFolders - incompleteCount;
+
+                appendFcLog(`Folder Create completed. Total: ${totalFolders}, Ready (3 Files): ${readyCount}, Errors (< 3 Files): ${incompleteCount}.`, incompleteCount > 0 ? 'warning' : 'success');
+
+                if (incompleteCount > 0) {
+                    showCustomAlert(
+                        'Folders Created with Incomplete Files',
+                        `${incompleteCount} folder(s) have fewer than 3 files and triggered an ERROR! They are displayed first in the Folder Manager.`,
+                        'warning'
+                    );
+                } else {
+                    showCustomAlert(
+                        'Folder Create Successful',
+                        `All ${totalFolders} folder(s) have exactly 3 files! Your package is ready.`,
+                        'success'
+                    );
+                }
+
+            } catch (err) {
+                console.error('Error creating folders:', err);
+                if (fcProgressCard) fcProgressCard.style.display = 'none';
+                appendFcLog(`Error: ${err.message}`, 'error');
+                showCustomAlert('Folder Create Error', err.message, 'error');
+            } finally {
+                fcBtn.disabled = false;
             }
         });
     }
 
-    function renderFolderLogTable(logs) {
-        if (!folderLogBody) return;
-        folderLogBody.innerHTML = '';
-        if (logs.length === 0) {
-            folderLogBody.innerHTML = '<tr><td colspan="3" style="text-align:center;">No folders were created.</td></tr>';
+    // Rebuild ZIP package in memory dynamically (triggered on rename, delete, copy)
+    async function rebuildFcPackage(silent = false) {
+        if (!fcFolderGroups || fcFolderGroups.length === 0) {
+            fcZipBlob = null;
+            fcMissingReportBlob = null;
             return;
         }
 
-        logs.forEach(log => {
-            const tr = document.createElement('tr');
-            
-            const tdFolder = document.createElement('td');
-            tdFolder.textContent = log.folder;
-            tdFolder.className = 'col-highlight';
-            tdFolder.style.fontWeight = '600';
-            
-            const tdMerged = document.createElement('td');
-            tdMerged.textContent = log.copied_merged || "";
-            tdMerged.title = log.copied_merged || "";
-            
-            const tdMoved = document.createElement('td');
-            tdMoved.textContent = log.moved_files ? log.moved_files.join(', ') : "";
-            tdMoved.title = log.moved_files ? log.moved_files.join(', ') : "";
+        const zip = new JSZip();
+        const foldersWithIssues = [];
+        let hasMissing = false;
 
-            tr.appendChild(tdFolder);
-            tr.appendChild(tdMerged);
-            tr.appendChild(tdMoved);
-            folderLogBody.appendChild(tr);
+        fcFolderGroups.forEach(grp => {
+            // Strict 3-File rule: exactly 3 files required
+            grp.isError = (grp.files.length !== 3);
+            if (grp.isError) {
+                foldersWithIssues.push(grp);
+                hasMissing = true;
+            }
+
+            const folder = zip.folder(grp.prefix);
+            grp.files.forEach(fObj => {
+                folder.file(fObj.name, fObj.blob || fObj.file);
+            });
+        });
+
+        // Re-sort so error folders (< 3 files) appear first
+        sortFolderGroups(fcFolderGroups);
+
+        if (hasMissing) {
+            const reportData = [
+                ["Folder Name (Prefix)", "Files Found", "Current Files", "Status"]
+            ];
+            foldersWithIssues.forEach(item => {
+                const fileNamesStr = item.files.map(f => f.name).join(", ");
+                const statusStr = item.files.length < 3
+                    ? `File Missing (Found ${item.files.length}, Expected 3)`
+                    : `Extra Files Present (Found ${item.files.length}, Expected 3)`;
+                reportData.push([
+                    item.prefix,
+                    item.files.length,
+                    fileNamesStr,
+                    statusStr
+                ]);
+            });
+
+            const wb = XLSX.utils.book_new();
+            const ws = XLSX.utils.aoa_to_sheet(reportData);
+            XLSX.utils.book_append_sheet(wb, ws, "Missing Files Log");
+            const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+            fcMissingReportBlob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            zip.file("Missing_Files_Report.xlsx", excelBuffer);
+        } else {
+            fcMissingReportBlob = null;
+        }
+
+        let zipFilename = "Grouped_Folders.zip";
+        if (fcFolderGroups.length === 1) {
+            zipFilename = `${fcFolderGroups[0].prefix}.zip`;
+        } else if (fcFolderGroups.length > 1) {
+            zipFilename = `${fcFolderGroups[0].prefix}-${fcFolderGroups[fcFolderGroups.length - 1].prefix}.zip`;
+        }
+        fcZipFilename = zipFilename;
+        fcZipBlob = await zip.generateAsync({ type: 'blob' });
+
+        // Update UI
+        renderFcDashboardUI();
+        if (fcFullscreenModal && fcFullscreenModal.style.display !== 'none') {
+            renderFcAccordion(fcModalCurrentFilter);
+        }
+
+        // Save session update
+        saveFolderCreateSession();
+
+        if (!silent) {
+            appendFcLog(`Package updated: ${zipFilename} re-zipped with current files.`);
+        }
+    }
+
+    // Render Tab 4 Dashboard Output Card
+    function renderFcDashboardUI() {
+        if (!fcOutputContainer) return;
+        if (!fcFolderGroups || fcFolderGroups.length === 0) {
+            fcOutputContainer.style.display = 'none';
+            return;
+        }
+
+        const totalFolders = fcFolderGroups.length;
+        const incompleteCount = fcFolderGroups.filter(f => f.isError).length;
+        const readyCount = totalFolders - incompleteCount;
+
+        fcOutputContainer.innerHTML = `
+            <div class="card result-card" style="display: block; margin-top: 1.5rem; padding: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <div style="width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; background: ${incompleteCount > 0 ? '#fee2e2' : '#ecfdf5'}; color: ${incompleteCount > 0 ? '#dc2626' : '#059669'};">
+                            <i class="fa-solid fa-${incompleteCount > 0 ? 'triangle-exclamation' : 'circle-check'}"></i>
+                        </div>
+                        <div>
+                            <h2 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #1e293b;">
+                                ${incompleteCount > 0 ? 'Folder Create Completed with Errors' : 'Folder Create Completed Successfully!'}
+                            </h2>
+                            <div style="font-size: 0.82rem; color: #64748b; margin-top: 2px;">
+                                ${incompleteCount > 0 ? `${incompleteCount} folder(s) have missing files (< 3 files). Fix them in Folder Manager.` : `All ${totalFolders} folder(s) have exactly 3 files! Ready for Invoice Arrange.`}
+                            </div>
+                        </div>
+                    </div>
+                    <div id="fcTimerBadge" style="background: #f1f5f9; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 8px; font-size: 0.78rem; font-weight: 600; color: #475569; display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-regular fa-clock" style="color: #6366f1;"></i> Auto-Saved (60:00)
+                    </div>
+                </div>
+
+                <!-- Stats Bar -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 1.25rem;">
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 0.75rem; color: #64748b; font-weight: 600; text-transform: uppercase;">Total Folders</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #1e293b;" id="fcTotalStat">${totalFolders}</div>
+                    </div>
+                    <div style="background: #ecfdf5; border: 1px solid #a7f3d0; padding: 12px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 0.75rem; color: #059669; font-weight: 600; text-transform: uppercase;">Ready (3 Files)</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #059669;" id="fcReadyStat">${readyCount}</div>
+                    </div>
+                    <div style="background: #fee2e2; border: 1px solid #fca5a5; padding: 12px; border-radius: 10px; text-align: center;">
+                        <div style="font-size: 0.75rem; color: #dc2626; font-weight: 600; text-transform: uppercase;">Error / Incomplete</div>
+                        <div style="font-size: 1.4rem; font-weight: 800; color: #dc2626;" id="fcErrorStat">${incompleteCount}</div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-download" id="fcDownloadZipBtn" style="padding: 10px 18px; font-weight: 700; font-size: 0.9rem; border-radius: 8px;">
+                        <i class="fa-solid fa-file-zipper"></i> Download Folder ZIP
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="fcDownloadReportBtn" style="padding: 10px 16px; font-weight: 600; font-size: 0.88rem; border-radius: 8px; display: ${incompleteCount > 0 ? 'inline-flex' : 'none'}; align-items: center; gap: 6px; background: #fff; border: 1.5px solid #cbd5e1;">
+                        <i class="fa-solid fa-file-excel" style="color: #059669;"></i> Download Missing Report
+                    </button>
+                    <button type="button" class="btn" id="openFcFullscreenBtn" style="padding: 10px 18px; font-weight: 700; font-size: 0.9rem; border-radius: 8px; background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; border: none; cursor: pointer;">
+                        <i class="fa-solid fa-expand"></i> Folder Manager (Full View)
+                    </button>
+                    <button type="button" class="btn btn-move-folder" id="fcMoveToInvoiceBtn" style="padding: 10px 18px; font-weight: 700; font-size: 0.9rem; border-radius: 8px; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #fff; border: none; cursor: pointer;">
+                        <i class="fa-solid fa-file-invoice"></i> Move to Invoice Arrange
+                    </button>
+                </div>
+            </div>
+        `;
+
+        fcOutputContainer.style.display = 'block';
+
+        // Bind dashboard button listeners
+        const dlZipBtn = document.getElementById('fcDownloadZipBtn');
+        if (dlZipBtn) {
+            dlZipBtn.addEventListener('click', () => {
+                if (!fcZipBlob) return;
+                const url = URL.createObjectURL(fcZipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fcZipFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            });
+        }
+
+        const dlReportBtn = document.getElementById('fcDownloadReportBtn');
+        if (dlReportBtn) {
+            dlReportBtn.addEventListener('click', () => {
+                if (!fcMissingReportBlob) {
+                    alert('No missing files found!');
+                    return;
+                }
+                const url = URL.createObjectURL(fcMissingReportBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'Missing_Files_Report.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            });
+        }
+
+        const openFsBtn = document.getElementById('openFcFullscreenBtn');
+        if (openFsBtn) {
+            openFsBtn.addEventListener('click', openFcFullscreenModal);
+        }
+
+        const moveInvBtn = document.getElementById('fcMoveToInvoiceBtn');
+        if (moveInvBtn) {
+            moveInvBtn.addEventListener('click', moveToInvoiceArrangeFromFolderCreate);
+        }
+    }
+
+    // Fullscreen Folder Manager Modal
+    function openFcFullscreenModal() {
+        if (!fcFullscreenModal) return;
+        fcFullscreenModal.style.display = 'flex';
+        renderFcAccordion(fcModalCurrentFilter);
+    }
+
+    function closeFcFullscreenModal() {
+        if (fcFullscreenModal) fcFullscreenModal.style.display = 'none';
+    }
+
+    if (closeFcModalBtn) closeFcModalBtn.addEventListener('click', closeFcFullscreenModal);
+    if (modalFcFooterCloseBtn) modalFcFooterCloseBtn.addEventListener('click', closeFcFullscreenModal);
+
+    if (modalFcDownloadZipBtn) {
+        modalFcDownloadZipBtn.addEventListener('click', () => {
+            const btn = document.getElementById('fcDownloadZipBtn');
+            if (btn) btn.click();
         });
     }
 
-    if (folderDownloadBtn) {
-        folderDownloadBtn.addEventListener('click', () => {
-            window.location.href = `/api/download-folder-zip?filename=${encodeURIComponent(folderZipFilename)}`;
+    if (modalFcDownloadReportBtn) {
+        modalFcDownloadReportBtn.addEventListener('click', () => {
+            const btn = document.getElementById('fcDownloadReportBtn');
+            if (btn) btn.click();
+        });
+    }
+
+    if (modalFcMoveToInvoiceBtn) {
+        modalFcMoveToInvoiceBtn.addEventListener('click', moveToInvoiceArrangeFromFolderCreate);
+    }
+    if (modalFcFooterMoveToInvoiceBtn) {
+        modalFcFooterMoveToInvoiceBtn.addEventListener('click', moveToInvoiceArrangeFromFolderCreate);
+    }
+
+    // Modal Filters (All / Incomplete / Ready)
+    const filterAllBtn = document.getElementById('modalFcFilterAllBtn');
+    const filterIncBtn = document.getElementById('modalFcFilterIncompleteBtn');
+    const filterRdyBtn = document.getElementById('modalFcFilterReadyBtn');
+
+    [filterAllBtn, filterIncBtn, filterRdyBtn].forEach(btn => {
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            [filterAllBtn, filterIncBtn, filterRdyBtn].forEach(b => b && b.classList.remove('active'));
+            btn.classList.add('active');
+            fcModalCurrentFilter = btn.getAttribute('data-filter') || 'all';
+            renderFcAccordion(fcModalCurrentFilter);
+        });
+    });
+
+    if (modalFcSearchInput) {
+        modalFcSearchInput.addEventListener('input', () => {
+            renderFcAccordion(fcModalCurrentFilter);
+        });
+    }
+
+    // Render Folder Accordion inside Fullscreen Modal
+    function renderFcAccordion(filter = 'all') {
+        if (!modalFcAccordionContainer) return;
+        modalFcAccordionContainer.innerHTML = '';
+
+        const totalFolders = fcFolderGroups.length;
+        const incompleteCount = fcFolderGroups.filter(f => f.isError).length;
+        const readyCount = totalFolders - incompleteCount;
+
+        // Update badges
+        if (modalFcTotalBadge) modalFcTotalBadge.innerHTML = `<i class="fa-solid fa-folder"></i> Total: ${totalFolders} Folders`;
+        if (modalFcReadyBadge) modalFcReadyBadge.innerHTML = `<i class="fa-solid fa-circle-check"></i> Ready (3 Files): ${readyCount}`;
+        if (modalFcErrorBadge) modalFcErrorBadge.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Incomplete (< 3 Files): ${incompleteCount} (Shown First)`;
+
+        if (modalFcDownloadReportBtn) {
+            modalFcDownloadReportBtn.style.display = incompleteCount > 0 ? 'inline-flex' : 'none';
+        }
+
+        if (filterAllBtn) filterAllBtn.innerText = `All Folders (${totalFolders})`;
+        if (filterIncBtn) filterIncBtn.innerText = `⚠️ Errors / Incomplete (${incompleteCount})`;
+        if (filterRdyBtn) filterRdyBtn.innerText = `✅ Ready (3 Files) (${readyCount})`;
+
+        const query = (modalFcSearchInput ? modalFcSearchInput.value : '').trim().toLowerCase();
+
+        const filtered = fcFolderGroups.filter(grp => {
+            if (filter === 'incomplete' && !grp.isError) return false;
+            if (filter === 'ready' && grp.isError) return false;
+
+            if (query !== '') {
+                const prefixMatch = grp.prefix.toLowerCase().includes(query);
+                const fileMatch = grp.files.some(f => f.name.toLowerCase().includes(query));
+                if (!prefixMatch && !fileMatch) return false;
+            }
+            return true;
+        });
+
+        if (modalFcSummaryText) {
+            modalFcSummaryText.innerText = `Showing ${filtered.length} of ${totalFolders} folder(s)`;
+        }
+
+        if (filtered.length === 0) {
+            modalFcAccordionContainer.innerHTML = `
+                <div style="text-align: center; padding: 3rem 1rem; color: #94a3b8;">
+                    <i class="fa-solid fa-folder-open" style="font-size: 2.5rem; color: #cbd5e1; margin-bottom: 0.75rem;"></i>
+                    <p style="font-weight: 500;">No folders matching the current filter/search.</p>
+                </div>
+            `;
+            return;
+        }
+
+        filtered.forEach((grp) => {
+            const card = document.createElement('div');
+            // Strict 3-File rule: Incomplete (< 3 files) open by default!
+            card.className = `fc-folder-card ${grp.isError ? 'error-card open' : 'success-card'}`;
+
+            const isOk = grp.files.length === 3;
+            const badgeColor = isOk ? '#059669' : '#dc2626';
+            const badgeBg = isOk ? '#ecfdf5' : '#fee2e2';
+            const badgeBorder = isOk ? '#a7f3d0' : '#fca5a5';
+            const missingDiff = 3 - grp.files.length;
+            const badgeText = isOk
+                ? `✅ 3 Files (Complete)`
+                : `⚠️ ${grp.files.length} / 3 Files (${missingDiff > 0 ? `Missing ${missingDiff}` : `Extra ${-missingDiff}`})`;
+
+            // Header
+            const header = document.createElement('div');
+            header.className = 'fc-folder-header';
+            header.innerHTML = `
+                <div class="fc-folder-title-left">
+                    <div class="fc-folder-icon">
+                        <i class="fa-solid fa-folder${grp.isError ? '-open' : ''}"></i>
+                    </div>
+                    <div>
+                        <div class="fc-folder-name">Folder [${grp.prefix}]</div>
+                        <div style="font-size: 0.75rem; color: #64748b;">${grp.files.length} of 3 file(s) attached</div>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                    <span style="background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder}; font-size: 0.78rem; font-weight: 700; padding: 0.25rem 0.65rem; border-radius: 6px;">
+                        ${badgeText}
+                    </span>
+                    <i class="fa-solid fa-chevron-down fc-chevron"></i>
+                </div>
+            `;
+            header.addEventListener('click', () => {
+                card.classList.toggle('open');
+            });
+            card.appendChild(header);
+
+            // Body
+            const body = document.createElement('div');
+            body.className = 'fc-folder-body';
+
+            // Files list
+            grp.files.forEach((fileObj, fIdx) => {
+                const fileRow = document.createElement('div');
+                fileRow.className = 'fc-file-row';
+
+                fileRow.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 0.6rem; min-width: 250px; flex: 1;">
+                        <i class="fa-solid fa-file-excel" style="color: #059669; font-size: 1.1rem;"></i>
+                        <div>
+                            <div style="font-weight: 600; font-size: 0.85rem; color: #1e293b; word-break: break-all;">${fileObj.name}</div>
+                            <div style="font-size: 0.72rem; color: #64748b;">${formatBytes(fileObj.size || 0)}</div>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+                        <button type="button" class="btn fc-view-file-btn" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd; font-weight: 600; cursor: pointer;">
+                            <i class="fa-solid fa-eye"></i> View
+                        </button>
+                        <button type="button" class="btn fc-copy-file-btn" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #ede9fe; color: #6d28d9; border: 1px solid #d8b4fe; font-weight: 600; cursor: pointer;">
+                            <i class="fa-solid fa-copy"></i> Copy to Folder
+                        </button>
+                        <button type="button" class="btn fc-rename-file-btn" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #fef3c7; color: #b45309; border: 1px solid #fde68a; font-weight: 600; cursor: pointer;">
+                            <i class="fa-solid fa-pen-to-square"></i> Rename
+                        </button>
+                        <button type="button" class="btn fc-download-file-btn" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; font-weight: 600; cursor: pointer;">
+                            <i class="fa-solid fa-download"></i> Download
+                        </button>
+                        <button type="button" class="btn fc-delete-file-btn" style="font-size: 0.75rem; padding: 0.3rem 0.6rem; border-radius: 6px; background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; font-weight: 600; cursor: pointer;">
+                            <i class="fa-solid fa-trash-can"></i> Delete
+                        </button>
+                    </div>
+                `;
+
+                // View first 50 rows
+                fileRow.querySelector('.fc-view-file-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    viewFcFile(grp.prefix, fIdx);
+                });
+
+                // Copy file to other incomplete folders
+                fileRow.querySelector('.fc-copy-file-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    openFcCopyFileModal(fileObj, grp.prefix);
+                });
+
+                // Rename file (locked extension)
+                fileRow.querySelector('.fc-rename-file-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    renameFcFile(grp.prefix, fIdx);
+                });
+
+                // Download single file
+                fileRow.querySelector('.fc-download-file-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    downloadFcSingleFile(grp.prefix, fIdx);
+                });
+
+                // Delete file
+                fileRow.querySelector('.fc-delete-file-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deleteFcFile(grp.prefix, fIdx);
+                });
+
+                body.appendChild(fileRow);
+            });
+
+            card.appendChild(body);
+            modalFcAccordionContainer.appendChild(card);
+        });
+    }
+
+    // View file (first 50 rows lag-free)
+    async function viewFcFile(prefix, fileIndex) {
+        const grp = fcFolderGroups.find(g => g.prefix === prefix);
+        if (!grp || !grp.files[fileIndex]) return;
+        const fileObj = grp.files[fileIndex];
+
+        showLoader(`Loading preview for ${fileObj.name}...`);
+        try {
+            let buffer;
+            if (fileObj.blob) {
+                buffer = await fileObj.blob.arrayBuffer();
+            } else if (fileObj.file) {
+                buffer = await fileObj.file.arrayBuffer();
+            } else {
+                throw new Error('File data is not available.');
+            }
+
+            const wb = XLSX.read(buffer, { type: 'array', sheetRows: 51 });
+            const sheetName = wb.SheetNames[0];
+            const sheet = wb.Sheets[sheetName];
+            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+            hideLoader();
+
+            if (!excelPreviewThead || !excelPreviewTbody || !renameExcelPreviewModal) return;
+
+            excelPreviewThead.innerHTML = '';
+            excelPreviewTbody.innerHTML = '';
+            if (excelPreviewModalTitle) {
+                excelPreviewModalTitle.textContent = `${fileObj.name} (Folder: ${prefix})`;
+            }
+
+            if (!rows || rows.length === 0) {
+                excelPreviewTbody.innerHTML = '<tr><td colspan="100%" style="text-align: center; padding: 20px;">Sheet is empty.</td></tr>';
+            } else {
+                const headerRow = rows[0];
+                const trHead = document.createElement('tr');
+                const thNum = document.createElement('th');
+                thNum.className = 'excel-row-num';
+                thNum.textContent = '#';
+                trHead.appendChild(thNum);
+
+                headerRow.forEach((colName, colIdx) => {
+                    const th = document.createElement('th');
+                    th.textContent = colName !== undefined && colName !== null && colName !== '' ? colName : `Col ${colIdx + 1}`;
+                    trHead.appendChild(th);
+                });
+                excelPreviewThead.appendChild(trHead);
+
+                const dataRows = rows.slice(1, 51);
+                dataRows.forEach((row, rowIdx) => {
+                    const tr = document.createElement('tr');
+                    const tdNum = document.createElement('td');
+                    tdNum.className = 'excel-row-num';
+                    tdNum.textContent = rowIdx + 1;
+                    tr.appendChild(tdNum);
+
+                    for (let c = 0; c < headerRow.length; c++) {
+                        const td = document.createElement('td');
+                        const val = row[c];
+                        td.textContent = val !== undefined && val !== null ? val : '';
+                        td.title = td.textContent;
+                        tr.appendChild(td);
+                    }
+                    excelPreviewTbody.appendChild(tr);
+                });
+            }
+
+            renameExcelPreviewModal.style.display = 'flex';
+        } catch (err) {
+            hideLoader();
+            console.error('Error previewing file:', err);
+            showCustomAlert('Preview Error', 'Failed to preview file: ' + err.message, 'error');
+        }
+    }
+
+    // Rename file with locked extension
+    function renameFcFile(prefix, fileIndex) {
+        const grp = fcFolderGroups.find(g => g.prefix === prefix);
+        if (!grp || !grp.files[fileIndex]) return;
+        const fileObj = grp.files[fileIndex];
+
+        const lastDot = fileObj.name.lastIndexOf('.');
+        const stem = lastDot !== -1 ? fileObj.name.slice(0, lastDot) : fileObj.name;
+        const ext = lastDot !== -1 ? fileObj.name.slice(lastDot) : '.xlsx';
+
+        const newStem = prompt(`Enter new filename for "${fileObj.name}" (extension ${ext} is locked):`, stem);
+        if (newStem === null) return;
+        const cleanStem = newStem.trim();
+        if (!cleanStem) {
+            alert('Filename cannot be empty.');
+            return;
+        }
+        if (/[\\/:*?"<>|]/.test(cleanStem)) {
+            alert('Filename cannot contain \\ / : * ? " < > |');
+            return;
+        }
+
+        const newFullName = cleanStem + ext;
+        fileObj.name = newFullName;
+        fileObj.customRelativePath = `${prefix}/${newFullName}`;
+        appendFcLog(`Renamed file in folder [${prefix}] to: ${newFullName}`);
+        rebuildFcPackage();
+    }
+
+    // Delete single file from folder
+    function deleteFcFile(prefix, fileIndex) {
+        const grp = fcFolderGroups.find(g => g.prefix === prefix);
+        if (!grp || !grp.files[fileIndex]) return;
+        const fileName = grp.files[fileIndex].name;
+
+        if (!confirm(`Are you sure you want to remove "${fileName}" from folder [${prefix}]?`)) return;
+
+        grp.files.splice(fileIndex, 1);
+        grp.isError = (grp.files.length !== 3);
+        appendFcLog(`Deleted "${fileName}" from folder [${prefix}]. Folder now has ${grp.files.length}/3 files.`);
+        rebuildFcPackage();
+    }
+
+    // Download single file from folder
+    function downloadFcSingleFile(prefix, fileIndex) {
+        const grp = fcFolderGroups.find(g => g.prefix === prefix);
+        if (!grp || !grp.files[fileIndex]) return;
+        const fileObj = grp.files[fileIndex];
+
+        const source = fileObj.blob || fileObj.file;
+        if (!source) return;
+        const url = URL.createObjectURL(source);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileObj.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // OPEN COPY FILE TO INCOMPLETE FOLDERS MODAL
+    function openFcCopyFileModal(sourceFile, sourcePrefix) {
+        if (!fcMoveFileModal) return;
+        fcSourceFileForCopy = sourceFile;
+        fcSourcePrefixForCopy = sourcePrefix;
+
+        if (fcMoveSourceFileName) {
+            fcMoveSourceFileName.textContent = `${sourceFile.name} (from folder [${sourcePrefix}])`;
+        }
+
+        renderFcTargetFoldersList();
+        fcMoveFileModal.classList.add('show');
+        fcMoveFileModal.style.display = 'flex';
+    }
+
+    function closeFcCopyFileModal() {
+        if (fcMoveFileModal) {
+            fcMoveFileModal.classList.remove('show');
+            fcMoveFileModal.style.display = 'none';
+        }
+        fcSourceFileForCopy = null;
+        fcSourcePrefixForCopy = null;
+    }
+
+    if (fcMoveCancelBtn) fcMoveCancelBtn.addEventListener('click', closeFcCopyFileModal);
+
+    function renderFcTargetFoldersList() {
+        if (!fcMoveFoldersList) return;
+        fcMoveFoldersList.innerHTML = '';
+
+        // Target folders: folders with < 3 files, excluding sourcePrefix
+        const incompleteTargets = fcFolderGroups.filter(g => g.prefix !== fcSourcePrefixForCopy && g.files.length < 3);
+
+        const search = (fcMoveSearchInput ? fcMoveSearchInput.value : '').trim().toLowerCase();
+
+        const displayTargets = incompleteTargets.filter(g => {
+            if (search === '') return true;
+            return g.prefix.toLowerCase().includes(search);
+        });
+
+        if (displayTargets.length === 0) {
+            fcMoveFoldersList.innerHTML = `
+                <div style="text-align: center; padding: 1.5rem 0.5rem; color: #94a3b8; font-size: 0.85rem;">
+                    <i class="fa-solid fa-circle-check" style="color: #059669; font-size: 1.5rem; margin-bottom: 6px;"></i>
+                    <p style="margin: 0;">No incomplete folders (< 3 files) found!</p>
+                </div>
+            `;
+            return;
+        }
+
+        displayTargets.forEach(grp => {
+            const opt = document.createElement('div');
+            opt.className = 'target-folder-option';
+
+            const alreadyHasFile = grp.files.some(f => f.name === fcSourceFileForCopy.name);
+
+            opt.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <input type="checkbox" class="fc-target-chk" value="${grp.prefix}" ${alreadyHasFile ? 'disabled' : 'checked'}>
+                    <div>
+                        <div style="font-weight: 600; font-size: 0.85rem; color: #1e293b;">Folder [${grp.prefix}]</div>
+                        <div style="font-size: 0.72rem; color: ${alreadyHasFile ? '#b45309' : '#dc2626'}; font-weight: 500;">
+                            ${alreadyHasFile ? '⚠️ Already contains this file' : `Current: ${grp.files.length}/3 files (Needs ${3 - grp.files.length})`}
+                        </div>
+                    </div>
+                </div>
+                <span class="rename-badge-pill error" style="font-size: 0.72rem; padding: 2px 6px;">${grp.files.length}/3</span>
+            `;
+
+            opt.addEventListener('click', (e) => {
+                if (e.target.tagName.toLowerCase() === 'input' || alreadyHasFile) return;
+                const chk = opt.querySelector('.fc-target-chk');
+                chk.checked = !chk.checked;
+                opt.classList.toggle('selected', chk.checked);
+            });
+
+            const chk = opt.querySelector('.fc-target-chk');
+            if (chk.checked && !alreadyHasFile) opt.classList.add('selected');
+
+            fcMoveFoldersList.appendChild(opt);
+        });
+    }
+
+    if (fcMoveSearchInput) {
+        fcMoveSearchInput.addEventListener('input', renderFcTargetFoldersList);
+    }
+
+    if (fcMoveSelectAllBtn) {
+        fcMoveSelectAllBtn.addEventListener('click', () => {
+            if (!fcMoveFoldersList) return;
+            fcMoveFoldersList.querySelectorAll('.fc-target-chk:not(:disabled)').forEach(chk => {
+                chk.checked = true;
+                chk.closest('.target-folder-option').classList.add('selected');
+            });
+        });
+    }
+
+    if (fcMoveDeselectAllBtn) {
+        fcMoveDeselectAllBtn.addEventListener('click', () => {
+            if (!fcMoveFoldersList) return;
+            fcMoveFoldersList.querySelectorAll('.fc-target-chk').forEach(chk => {
+                chk.checked = false;
+                chk.closest('.target-folder-option').classList.remove('selected');
+            });
+        });
+    }
+
+    // Confirm Copy File into selected incomplete folders
+    if (fcMoveConfirmBtn) {
+        fcMoveConfirmBtn.addEventListener('click', async () => {
+            if (!fcSourceFileForCopy || !fcMoveFoldersList) return;
+
+            const selectedCheckboxes = fcMoveFoldersList.querySelectorAll('.fc-target-chk:checked');
+            const targetPrefixes = Array.from(selectedCheckboxes).map(c => c.value);
+
+            if (targetPrefixes.length === 0) {
+                alert('Please select at least one target folder.');
+                return;
+            }
+
+            fcMoveConfirmBtn.disabled = true;
+            const originalHTML = fcMoveConfirmBtn.innerHTML;
+            fcMoveConfirmBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Copying...';
+
+            try {
+                let copiedCount = 0;
+                targetPrefixes.forEach(targetPrefix => {
+                    const grp = fcFolderGroups.find(g => g.prefix === targetPrefix);
+                    if (!grp) return;
+
+                    const exists = grp.files.some(f => f.name === fcSourceFileForCopy.name);
+                    if (!exists) {
+                        grp.files.push({
+                            id: 'c_' + targetPrefix + '_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                            name: fcSourceFileForCopy.name,
+                            size: fcSourceFileForCopy.size,
+                            blob: fcSourceFileForCopy.blob || null,
+                            file: fcSourceFileForCopy.file || null,
+                            customRelativePath: `${targetPrefix}/${fcSourceFileForCopy.name}`
+                        });
+                        grp.isError = (grp.files.length !== 3);
+                        copiedCount++;
+                    }
+                });
+
+                closeFcCopyFileModal();
+                await rebuildFcPackage();
+
+                appendFcLog(`Copied "${fcSourceFileForCopy.name}" into ${copiedCount} incomplete folder(s).`, 'success');
+                showCustomAlert(
+                    'File Copied Successfully',
+                    `"${fcSourceFileForCopy.name}" has been copied into ${copiedCount} folder(s)!`,
+                    'success'
+                );
+            } catch (err) {
+                console.error('Error copying file to folders:', err);
+                showCustomAlert('Copy Error', err.message, 'error');
+            } finally {
+                fcMoveConfirmBtn.disabled = false;
+                fcMoveConfirmBtn.innerHTML = originalHTML;
+            }
+        });
+    }
+
+    // DIRECT MOVE TO INVOICE ARRANGE (TAB 5)
+    function moveToInvoiceArrangeFromFolderCreate() {
+        if (!fcZipBlob) {
+            showCustomAlert('Error', 'No ZIP package available. Please group folders first.', 'error');
+            return;
+        }
+
+        try {
+            showLoader('Moving ZIP to Invoice Arrange...');
+            const zipFile = new File([fcZipBlob], fcZipFilename || 'Grouped_Folders.zip', {
+                type: 'application/zip',
+                lastModified: Date.now()
+            });
+            zipFile.customRelativePath = zipFile.name;
+
+            // Feed directly into Tab 5
+            if (typeof handleInvoiceFilesSelection === 'function') {
+                handleInvoiceFilesSelection([zipFile]);
+            }
+
+            // Close fullscreen modal if open
+            closeFcFullscreenModal();
+
+            hideLoader();
+
+            // Switch to Tab 5 (Invoice Arrange)
+            const tabInvoiceBtn = document.getElementById('tabInvoiceBtn');
+            if (tabInvoiceBtn) {
+                tabInvoiceBtn.click();
+            }
+
+            setTimeout(() => {
+                const dropzone = document.getElementById('invoiceDropzone');
+                if (dropzone) dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }, 150);
+
+            showCustomAlert(
+                'Moved to Invoice Arrange',
+                `Folder ZIP "${zipFile.name}" has been transferred to Invoice Arrange!`,
+                'success'
+            );
+        } catch (err) {
+            hideLoader();
+            console.error('Error moving to Invoice Arrange:', err);
+            showCustomAlert('Error', 'Failed to transfer ZIP to Invoice Arrange: ' + err.message, 'error');
+        }
+    }
+
+    // ----------------------------------------------------
+    // 1-HOUR PERSISTENCE FOR CREATE FOLDER (INDEXEDDB)
+    // ----------------------------------------------------
+    async function saveFolderCreateSession() {
+        try {
+            const expiresAt = Date.now() + 3600000; // 1 hour
+            const serializedGroups = fcFolderGroups.map(g => ({
+                prefix: g.prefix,
+                isError: g.isError,
+                files: g.files.map(f => ({
+                    id: f.id,
+                    name: f.name,
+                    size: f.size,
+                    customRelativePath: f.customRelativePath
+                }))
+            }));
+
+            const sessionData = {
+                id: 'latest_folder_create_session',
+                timestamp: Date.now(),
+                expiresAt: expiresAt,
+                fcZipFilename: fcZipFilename,
+                fcFolderGroups: serializedGroups,
+                fcZipBlob: fcZipBlob,
+                fcMissingReportBlob: fcMissingReportBlob
+            };
+
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.put(sessionData);
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => resolve(false);
+            });
+        } catch (err) {
+            console.warn('Error saving folder create session:', err);
+        }
+    }
+
+    async function getFolderCreateSession() {
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readonly');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.get('latest_folder_create_session');
+                req.onsuccess = () => resolve(req.result || null);
+                req.onerror = () => resolve(null);
+            });
+        } catch (err) {
+            return null;
+        }
+    }
+
+    async function clearFolderCreateSession() {
+        try {
+            const db = await openIndexedDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                const store = tx.objectStore(STORE_NAME);
+                const req = store.delete('latest_folder_create_session');
+                req.onsuccess = () => resolve(true);
+                req.onerror = () => resolve(false);
+            });
+        } catch (err) {}
+    }
+
+    function startFcCountdownTimer(remainingSeconds) {
+        if (fcCountdownInterval) clearInterval(fcCountdownInterval);
+        let sec = remainingSeconds;
+
+        const updateBadge = () => {
+            const timerBadge = document.getElementById('fcTimerBadge');
+            if (!timerBadge) return;
+            if (sec <= 0) {
+                clearInterval(fcCountdownInterval);
+                timerBadge.innerHTML = '<i class="fa-solid fa-clock-rotate-left"></i> Session Expired';
+                timerBadge.style.background = '#fee2e2';
+                timerBadge.style.color = '#dc2626';
+                clearFolderCreateSession();
+                return;
+            }
+            const mins = Math.floor(sec / 60);
+            const s = sec % 60;
+            timerBadge.innerHTML = `<i class="fa-regular fa-clock" style="color: #6366f1;"></i> Auto-Saved (${mins}:${s < 10 ? '0' : ''}${s})`;
+            sec--;
+        };
+
+        updateBadge();
+        fcCountdownInterval = setInterval(updateBadge, 1000);
+    }
+
+    // Restore Folder Create Session on Page Load (1-Hour)
+    async function restoreFolderCreateSessionIfValid() {
+        const s = await getFolderCreateSession();
+        if (!s) return;
+
+        const now = Date.now();
+        if (!s.expiresAt || now > s.expiresAt) {
+            await clearFolderCreateSession();
+            return;
+        }
+
+        try {
+            fcZipFilename = s.fcZipFilename || 'Grouped_Folders.zip';
+            fcZipBlob = s.fcZipBlob || null;
+            fcMissingReportBlob = s.fcMissingReportBlob || null;
+
+            if (s.fcZipBlob) {
+                const zip = await JSZip.loadAsync(s.fcZipBlob);
+                fcFolderGroups = [];
+
+                if (s.fcFolderGroups && Array.isArray(s.fcFolderGroups)) {
+                    for (const grpMeta of s.fcFolderGroups) {
+                        const grp = {
+                            prefix: grpMeta.prefix,
+                            isError: grpMeta.isError,
+                            files: []
+                        };
+
+                        for (const fMeta of grpMeta.files) {
+                            const zipEntry = zip.file(`${grpMeta.prefix}/${fMeta.name}`);
+                            let blob = null;
+                            if (zipEntry) {
+                                blob = await zipEntry.async('blob');
+                            }
+                            grp.files.push({
+                                id: fMeta.id,
+                                name: fMeta.name,
+                                size: fMeta.size,
+                                blob: blob,
+                                customRelativePath: `${grpMeta.prefix}/${fMeta.name}`
+                            });
+                        }
+                        grp.isError = (grp.files.length !== 3);
+                        fcFolderGroups.push(grp);
+                    }
+                }
+            }
+
+            if (fcFolderGroups.length > 0) {
+                sortFolderGroups(fcFolderGroups);
+                renderFcDashboardUI();
+                const remainingSecs = Math.max(0, Math.floor((s.expiresAt - now) / 1000));
+                startFcCountdownTimer(remainingSecs);
+                appendFcLog(`Restored folder create session (${fcFolderGroups.length} folders, ${Math.floor(remainingSecs/60)}m remaining).`, 'info');
+            }
+        } catch (err) {
+            console.warn('Error restoring folder create session:', err);
+        }
+    }
+
+    // Call restore on page load
+    setTimeout(restoreFolderCreateSessionIfValid, 300);
+
+    // ----------------------------------------------------
+    // MOVE MERGED FILE TO CREATE FOLDER ACTION
+    // ----------------------------------------------------
+    const moveToFolderBtn = document.getElementById('moveToFolderBtn');
+    if (moveToFolderBtn) {
+        moveToFolderBtn.addEventListener('click', async () => {
+            const originalBtnContent = moveToFolderBtn.innerHTML;
+            try {
+                moveToFolderBtn.disabled = true;
+                moveToFolderBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Moving...';
+
+                let blob = cachedMergedBlob;
+                if (!blob) {
+                    // Fetch the merged Excel file from backend
+                    const response = await fetch('/api/download');
+                    if (!response.ok) {
+                        throw new Error('Merged file is not available. Please process and merge again.');
+                    }
+                    blob = await response.blob();
+                    cachedMergedBlob = blob;
+                }
+
+                if (!blob || blob.size === 0) {
+                    throw new Error('Empty file received. Please re-run the merge process.');
+                }
+
+                // Create standard File object with required name
+                const mergedFile = new File([blob], 'Flipkart_Merged_Orders.xlsx', {
+                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    lastModified: Date.now()
+                });
+                mergedFile.customRelativePath = 'Flipkart_Merged_Orders.xlsx';
+
+                // Switch Create Folder mode to 'files' if it was in 'folders' mode
+                const modeFilesBtn3 = document.getElementById('fcModeFilesBtn') || document.getElementById('folderModeFilesBtn');
+                if (folderMode !== 'files' && modeFilesBtn3) {
+                    modeFilesBtn3.click();
+                }
+
+                // Remove any existing merged file from Create Folder to avoid duplicate
+                selectedFolderFiles = selectedFolderFiles.filter(f => !checkIsMergedFile(f));
+                // Add the fresh merged file at the top
+                selectedFolderFiles.unshift(mergedFile);
+                fcFiles = selectedFolderFiles;
+
+                // Update Create Folder UI list
+                updateFolderFilesListUI();
+
+                // Switch to Create Folder tab
+                if (tabFolderBtn) {
+                    tabFolderBtn.click();
+                }
+
+                // Scroll smoothly to the files list
+                setTimeout(() => {
+                    const targetEl = document.getElementById('fcSelectedFilesCard') || document.getElementById('fcDropzone');
+                    if (targetEl && targetEl.style.display !== 'none') {
+                        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        const dropzone = document.getElementById('fcDropzone');
+                        if (dropzone) dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }, 150);
+
+                showCustomAlert(
+                    'Moved to Create Folder',
+                    'Flipkart_Merged_Orders.xlsx has been added to Create Folder! You can now add your prefix files here.',
+                    'success'
+                );
+
+            } catch (error) {
+                console.error('Error moving file to Create Folder:', error);
+                showCustomAlert('Error', error.message || 'Failed to move file to Create Folder.', 'error');
+            } finally {
+                moveToFolderBtn.disabled = false;
+                moveToFolderBtn.innerHTML = originalBtnContent;
+            }
         });
     }
 

@@ -9,6 +9,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import requests
 
 app = Flask(__name__)
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 CORS(app)
 
 # Detect file type by inspecting magic bytes
@@ -999,17 +1000,16 @@ def split_file_route():
         # Save split files to a ZIP archive in temp/
         os.makedirs('temp', exist_ok=True)
         zip_path = os.path.join('temp', 'split_output.zip')
+        opt_zip_path = os.path.join('temp', f'split_output_{option}.zip')
         
-        # Remove old zip if exists
-        if os.path.exists(zip_path):
-            try:
-                os.remove(zip_path)
-            except Exception:
-                pass
-                
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-            for s_name, s_bytes in split_files:
-                zip_file.writestr(s_name, s_bytes)
+        # Write to both general and option-specific zip
+        for p in [zip_path, opt_zip_path]:
+            if os.path.exists(p):
+                try: os.remove(p)
+                except Exception: pass
+            with zipfile.ZipFile(p, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                for s_name, s_bytes in split_files:
+                    zip_file.writestr(s_name, s_bytes)
                 
         # Generate log output
         log_entries = []
@@ -1056,7 +1056,10 @@ def split_file_route():
 @app.route('/api/download-split', methods=['GET'])
 def download_split():
     custom_filename = request.args.get('filename', 'Split_Files.zip')
-    temp_path = os.path.join('temp', 'split_output.zip')
+    option = request.args.get('option', '')
+    temp_path = os.path.join('temp', f'split_output_{option}.zip') if option else os.path.join('temp', 'split_output.zip')
+    if not os.path.exists(temp_path):
+        temp_path = os.path.join('temp', 'split_output.zip')
     if not os.path.exists(temp_path):
         return jsonify({'error': 'Split ZIP archive not found. Please split again.'}), 400
     return send_file(
