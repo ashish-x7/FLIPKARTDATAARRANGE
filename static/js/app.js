@@ -3202,12 +3202,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Fullscreen Folder Manager Modal
     function openFcFullscreenModal() {
         if (!fcFullscreenModal) return;
+        fcFullscreenModal.classList.add('show', 'active');
         fcFullscreenModal.style.display = 'flex';
         renderFcAccordion(fcModalCurrentFilter);
     }
 
     function closeFcFullscreenModal() {
-        if (fcFullscreenModal) fcFullscreenModal.style.display = 'none';
+        if (fcFullscreenModal) {
+            fcFullscreenModal.classList.remove('show', 'active');
+            fcFullscreenModal.style.display = 'none';
+        }
     }
 
     if (closeFcModalBtn) closeFcModalBtn.addEventListener('click', closeFcFullscreenModal);
@@ -3667,6 +3671,11 @@ document.addEventListener('DOMContentLoaded', () => {
         fcMoveConfirmBtn.addEventListener('click', async () => {
             if (!fcSourceFileForCopy || !fcMoveFoldersList) return;
 
+            const sourceFileName = fcSourceFileForCopy.name;
+            const sourceFileSize = fcSourceFileForCopy.size;
+            const sourceFileBlob = fcSourceFileForCopy.blob || null;
+            const sourceFileRaw = fcSourceFileForCopy.file || null;
+
             const selectedCheckboxes = fcMoveFoldersList.querySelectorAll('.fc-target-chk:checked');
             const targetPrefixes = Array.from(selectedCheckboxes).map(c => c.value);
 
@@ -3685,15 +3694,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     const grp = fcFolderGroups.find(g => g.prefix === targetPrefix);
                     if (!grp) return;
 
-                    const exists = grp.files.some(f => f.name === fcSourceFileForCopy.name);
+                    const exists = grp.files.some(f => f.name === sourceFileName);
                     if (!exists) {
                         grp.files.push({
                             id: 'c_' + targetPrefix + '_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-                            name: fcSourceFileForCopy.name,
-                            size: fcSourceFileForCopy.size,
-                            blob: fcSourceFileForCopy.blob || null,
-                            file: fcSourceFileForCopy.file || null,
-                            customRelativePath: `${targetPrefix}/${fcSourceFileForCopy.name}`
+                            name: sourceFileName,
+                            size: sourceFileSize,
+                            blob: sourceFileBlob,
+                            file: sourceFileRaw,
+                            customRelativePath: `${targetPrefix}/${sourceFileName}`
                         });
                         grp.isError = (grp.files.length !== 3);
                         copiedCount++;
@@ -3703,10 +3712,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 closeFcCopyFileModal();
                 await rebuildFcPackage();
 
-                appendFcLog(`Copied "${fcSourceFileForCopy.name}" into ${copiedCount} incomplete folder(s).`, 'success');
+                appendFcLog(`Copied "${sourceFileName}" into ${copiedCount} incomplete folder(s).`, 'success');
                 showCustomAlert(
                     'File Copied Successfully',
-                    `"${fcSourceFileForCopy.name}" has been copied into ${copiedCount} folder(s)!`,
+                    `"${sourceFileName}" has been copied into ${copiedCount} folder(s)!`,
                     'success'
                 );
             } catch (err) {

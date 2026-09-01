@@ -1731,8 +1731,8 @@ footer {
     align-items: center;
     justify-content: center;
     z-index: 999998;
-    opacity: 0;
-    pointer-events: none;
+    opacity: 1;
+    pointer-events: auto;
     transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     padding: 0.5rem;
 }
