@@ -1392,44 +1392,82 @@ def load_file_to_openpyxl_workbook(file_bytes, filename):
         raise ValueError(f"Could not load file {filename} to openpyxl workbook: {str(e)}")
 
 def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_bytes, details_filename, dest_folder):
-    # Load Details file to extract Invoice Numbers from Column B starting at row 3
+    from openpyxl.styles import PatternFill, Font, Alignment
+    from openpyxl.utils import get_column_letter
+    import math
+
+    def excel_round(val, decimals=0):
+        multiplier = 10 ** decimals
+        shifted = val * multiplier
+        if shifted >= 0:
+            rounded = math.floor(shifted + 0.5)
+        else:
+            rounded = math.ceil(shifted - 0.5)
+        return rounded / multiplier if decimals > 0 else int(rounded)
+
+    # 1. Load Details file to extract Invoice Numbers from Column B starting at row 3
     df_details = load_any_sheet_to_dataframe(details_bytes, details_filename, header=None)
-    
-    details_invoices = []
-    if df_details.shape[0] > 2:
-        details_invoices = df_details.iloc[2:, 1].dropna().astype(str).str.strip().tolist()
-        details_invoices = [inv.replace('`', '').replace('"', '').strip() for inv in details_invoices if inv]
-        
-    # Load DT file
-    wb_dt = load_file_to_openpyxl_workbook(dt_bytes, dt_filename)
-    ws_dt = wb_dt.active
-    
-    # Step A: Delete matching rows
+    details_invoices = set()
+    if df_details is not None and df_details.shape[0] > 2 and df_details.shape[1] > 1:
+        for inv in df_details.iloc[2:, 1].dropna().astype(str):
+            clean_inv = inv.replace('`', '').replace('"', '').strip()
+            if clean_inv:
+                details_invoices.add(clean_inv)
+
+    # 2. Load DT file rows in memory (blazing fast compared to openpyxl ws.delete_rows)
+    wb_dt_raw = load_file_to_openpyxl_workbook(dt_bytes, dt_filename)
+    ws_dt_raw = wb_dt_raw.active
+    raw_dt_rows = list(ws_dt_raw.iter_rows(values_only=True))
+
+    if not raw_dt_rows:
+        return {
+            'prefix': '101',
+            'invoice_prefix': 'FK',
+            'suffix_range': 'empty',
+            'subfolder_name': '101-(FK-empty)',
+            'deleted_count': 0,
+            'matched_od_count': 0,
+            'gst_created': False,
+            'gst_exported_count': 0,
+            'dup_created': False,
+            'duplicates_count': 0,
+            'dt_new_name': '101-(empty)-DT.xlsx',
+            'od_new_name': '101-(FK-empty)-OD.xlsx',
+            'pr_new_name': '101-(FK-empty)-PR.xlsx'
+        }
+
+    header_dt = list(raw_dt_rows[0])
+    data_dt_rows = raw_dt_rows[1:]
+
+    # Step A: Filter out rows matching details_invoices
     deleted_count = 0
-    for r in range(ws_dt.max_row, 1, -1):
-        val = ws_dt.cell(row=r, column=7).value
-        if val:
+    surviving_dt_rows = []
+    for r_vals in data_dt_rows:
+        row = list(r_vals)
+        val = row[6] if len(row) > 6 else None
+        if val is not None:
             val_clean = str(val).replace('`', '').replace('"', '').strip()
-            if val_clean in details_invoices:
-                ws_dt.delete_rows(r, 1)
+            if val_clean and val_clean in details_invoices:
                 deleted_count += 1
-                
+                continue
+        surviving_dt_rows.append(row)
+
     # Step B: Prefix and suffix calculation
     file_prefix = "101"
     if '-' in dt_filename:
         file_prefix = dt_filename.split('-', 1)[0].strip()
-        
+
     suffixes = []
     invoice_prefix = None
-    for r in range(2, ws_dt.max_row + 1):
-        val = ws_dt.cell(row=r, column=7).value
-        if val:
+    for row in surviving_dt_rows:
+        val = row[6] if len(row) > 6 else None
+        if val is not None:
             val_str = str(val).strip()
             if '-' in val_str:
                 parts = val_str.rsplit('-', 1)
                 p_part = parts[0].replace('`', '').replace('"', '').strip()
                 s_part = parts[1].strip()
-                if not invoice_prefix:
+                if not invoice_prefix and p_part:
                     invoice_prefix = p_part
                 if s_part.isdigit():
                     suffixes.append(int(s_part))
@@ -1437,170 +1475,163 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
                 val_clean = val_str.replace('`', '').replace('"', '').strip()
                 if val_clean.isdigit():
                     suffixes.append(int(val_clean))
-                if not invoice_prefix:
+                if not invoice_prefix and val_clean:
                     invoice_prefix = val_clean
-                    
+
     if suffixes:
         min_s = min(suffixes)
         max_s = max(suffixes)
         suffix_range = f"{min_s}-{max_s}" if min_s != max_s else f"{min_s}"
     else:
         suffix_range = "empty"
-        
+
     if not invoice_prefix:
         invoice_prefix = "FK"
-        
+
     dt_new_name = f"{file_prefix}-({suffix_range})-DT.xlsx"
     od_new_name = f"{file_prefix}-({invoice_prefix}-{suffix_range})-OD.xlsx"
     pr_new_name = f"{file_prefix}-({invoice_prefix}-{suffix_range})-PR.xlsx"
-    
+
     # Step C: Collect clean suborder numbers
     suborders_in_dt = set()
-    for r in range(2, ws_dt.max_row + 1):
-        val = ws_dt.cell(row=r, column=5).value
-        if val:
+    for row in surviving_dt_rows:
+        val = row[4] if len(row) > 4 else None
+        if val is not None:
             val_clean = clean_order_item_id(val)
             if val_clean:
                 suborders_in_dt.add(val_clean)
-                
+
     # Load OD file
     wb_od = load_file_to_openpyxl_workbook(od_bytes, od_filename)
     ws_od = wb_od.active
-    
-    from openpyxl.styles import PatternFill, Font
-    from openpyxl.utils import get_column_letter
-    
+
     yellow_fill = PatternFill(start_color="FFFFB4", end_color="FFFFB4", fill_type="solid")
-    
+
     wb_matched_od = Workbook()
     ws_matched_od = wb_matched_od.active
     ws_matched_od.title = "Matched Orders"
-    
+
     headers_od = [cell.value for cell in ws_od[1]]
     ws_matched_od.append(headers_od)
-    
+
     matched_od_count = 0
+    od_lookup = {}
     for r in range(2, ws_od.max_row + 1):
-        val = ws_od.cell(row=r, column=1).value
-        if val:
-            val_clean = clean_order_item_id(val)
-            if val_clean in suborders_in_dt:
+        item_id = ws_od.cell(row=r, column=1).value
+        clean_item_id = clean_order_item_id(item_id) if item_id else ""
+        if clean_item_id:
+            fsn_val = ws_od.cell(row=r, column=9).value
+            sku_val = ws_od.cell(row=r, column=8).value
+            title_val = ws_od.cell(row=r, column=10).value
+            od_lookup[clean_item_id] = (fsn_val, sku_val, title_val)
+
+            if clean_item_id in suborders_in_dt:
                 matched_od_count += 1
                 row_vals = [cell.value for cell in ws_od[r]]
                 ws_matched_od.append(row_vals)
                 for col in range(1, ws_od.max_column + 1):
                     ws_od.cell(row=r, column=col).fill = yellow_fill
-                    
-    # Step D: GST Not Applicable Export
+
+    # Step D: GST Not Applicable Export & DT modifications
     wb_gst = Workbook()
     ws_gst = wb_gst.active
     ws_gst.title = "GST NOT APPLICABLE"
-    
+
     gst_headers = ["EE Invoice No", "Order Status", "Invoice Date", "Item Quantity", "Selling Price", "Item Price(Excluding Tax)"]
     ws_gst.append(gst_headers)
-    
+
     black_fill = PatternFill(start_color="000000", end_color="000000", fill_type="solid")
     white_bold_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
     for col_idx in range(1, 7):
         cell = ws_gst.cell(row=1, column=col_idx)
         cell.fill = black_fill
         cell.font = white_bold_font
-        
+
     light_green_fill = PatternFill(start_color="C8FFC8", end_color="C8FFC8", fill_type="solid")
     ap_green_fill = PatternFill(start_color="B4F0B4", end_color="B4F0B4", fill_type="solid")
-    
+
+    wb_dt = Workbook()
+    ws_dt = wb_dt.active
+    ws_dt.title = "Sheet1"
+    ws_dt.append(header_dt)
+
     shade_index = 1
     new_row_gst = 2
     gst_exported_count = 0
-    
-    for r in range(2, ws_dt.max_row + 1):
-        invoice_val = ws_dt.cell(row=r, column=7).value
-        ap_val = ws_dt.cell(row=r, column=42).value
-        
+    invoice_counts = {}
+
+    for row in surviving_dt_rows:
+        while len(row) < 65:
+            row.append("")
+
+        invoice_val = row[6] # Column 7
+        if invoice_val:
+            val_clean = str(invoice_val).strip()
+            invoice_counts[val_clean] = invoice_counts.get(val_clean, 0) + 1
+
+        ap_val = row[41] # Column 42 (Tax Rate AP)
+        is_gst_row = False
         if invoice_val and (not ap_val or str(ap_val).strip() == ""):
-            val_g = ws_dt.cell(row=r, column=7).value
-            val_i = ws_dt.cell(row=r, column=9).value
-            val_m = ws_dt.cell(row=r, column=13).value
-            val_r = ws_dt.cell(row=r, column=18).value
-            val_av = ws_dt.cell(row=r, column=48).value
-            val_ax = ws_dt.cell(row=r, column=50).value
-            
-            ws_gst.append([val_g, val_i, val_m, val_r, val_av, val_ax])
-            
+            is_gst_row = True
+            val_g = row[6]
+            val_i = row[8]
+            val_m = row[12]
+            val_r = row[17]
+            val_av_raw = row[47] # Column 48
+            val_ax_raw = row[49] # Column 50
+
+            ws_gst.append([val_g, val_i, val_m, val_r, val_av_raw, val_ax_raw])
+
             Rc = 170 + ((shade_index * 37) % 80)
             Gc = 170 + ((shade_index * 67) % 80)
             Bc = 170 + ((shade_index * 97) % 80)
             color_hex = f"{Rc:02X}{Gc:02X}{Bc:02X}"
             row_fill = PatternFill(start_color=color_hex, end_color=color_hex, fill_type="solid")
-            
             for c_idx in range(1, 7):
                 ws_gst.cell(row=new_row_gst, column=c_idx).fill = row_fill
-                
-            # Write new values and calculations directly in ws_dt
-            import math
-            def excel_round(val, decimals=0):
-                multiplier = 10 ** decimals
-                shifted = val * multiplier
-                if shifted >= 0:
-                    rounded = math.floor(shifted + 0.5)
-                else:
-                    rounded = math.ceil(shifted - 0.5)
-                return rounded / multiplier if decimals > 0 else int(rounded)
-            
-            # Tax Rate AP (column 42) = 5
-            ws_dt.cell(row=r, column=42, value=5)
-            
-            # Get Selling Price value (column 48)
-            val_av_raw = ws_dt.cell(row=r, column=48).value
+
             val_av = 0.0
             if val_av_raw is not None:
                 try:
                     val_av = float(str(val_av_raw).replace(",", ""))
                 except ValueError:
                     pass
-                    
-            # Item Price(Excluding Tax) AX (column 50) = ROUND(AV/1.05, 0)
+
+            row[41] = 5 # Tax Rate AP (col 42)
             val_ax = excel_round(val_av / 1.05, 0)
-            ws_dt.cell(row=r, column=50, value=val_ax)
-            
-            # IGST Rate BH (column 60) = ROUND(AV-ROUND(AV/1.05, 4), 4)
+            row[49] = val_ax # Item Price(Excluding Tax) AX (col 50)
+
             round_part = excel_round(val_av / 1.05, 4)
             val_bh = excel_round(val_av - round_part, 4)
-            ws_dt.cell(row=r, column=60, value=val_bh)
-            
-            # Check Billing State (column 40)
-            state_raw = ws_dt.cell(row=r, column=40).value
+            row[59] = val_bh # IGST Rate BH (col 60)
+
+            state_raw = row[39] # col 40
             state_val = str(state_raw or "").strip().lower()
-            
+
             if state_val == "gujarat":
-                ws_dt.cell(row=r, column=61, value="") # IGST Amount BI (column 61)
+                row[60] = "" # BI (col 61)
                 val_bj = excel_round((val_av - round_part) / 2, 4)
-                ws_dt.cell(row=r, column=62, value=val_bj) # CGST Amount BJ (column 62)
-                ws_dt.cell(row=r, column=63, value=val_bj) # SGST Amount BK (column 63)
+                row[61] = val_bj # BJ (col 62)
+                row[62] = val_bj # BK (col 63)
             else:
                 val_bi = excel_round(val_av - round_part, 4)
-                ws_dt.cell(row=r, column=61, value=val_bi) # IGST Amount BI (column 61)
-                ws_dt.cell(row=r, column=62, value="") # CGST Amount BJ (column 62)
-                ws_dt.cell(row=r, column=63, value="") # SGST Amount BK (column 63)
-            
-            for c_col in [7, 9, 13, 18, 48, 50]:
-                ws_dt.cell(row=r, column=c_col).fill = light_green_fill
-            ws_dt.cell(row=r, column=42).fill = ap_green_fill
-            
+                row[60] = val_bi # BI (col 61)
+                row[61] = "" # BJ (col 62)
+                row[62] = "" # BK (col 63)
+
             shade_index += 1
             new_row_gst += 1
             gst_exported_count += 1
-            
-    # Duplicates check
-    invoice_counts = {}
-    for r in range(2, ws_dt.max_row + 1):
-        val = ws_dt.cell(row=r, column=7).value
-        if val:
-            val_clean = str(val).strip()
-            invoice_counts[val_clean] = invoice_counts.get(val_clean, 0) + 1
-            
+
+        ws_dt.append(row)
+        current_r = ws_dt.max_row
+        if is_gst_row:
+            for c_col in [7, 9, 13, 18, 48, 50]:
+                ws_dt.cell(row=current_r, column=c_col).fill = light_green_fill
+            ws_dt.cell(row=current_r, column=42).fill = ap_green_fill
+
     duplicates = {k: v for k, v in invoice_counts.items() if v > 1}
-    
+
     # State mapping dictionary
     STATE_TO_CODE = {
         'ANDHRA PRADESH': 'AP', 'ARUNACHAL PRADESH': 'AR', 'ASSAM': 'AS', 'BIHAR': 'BR',
@@ -1621,7 +1652,6 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     ws_pr = wb_pr.active
     ws_pr.title = "PR_Report"
 
-    # Headers
     pr_headers = [
         "Order ID", "Invoice ID", "New Invoice ID", "Invoice Reference Number (IRN)",
         "Shipment date", "Invoice date", "GST ID", "FSN CODE", "SKU", "Item Title",
@@ -1630,119 +1660,91 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     ]
     ws_pr.append(pr_headers)
 
-    # Build lookup from OD file
-    od_lookup = {}
-    for r_od in range(2, ws_od.max_row + 1):
-        item_id = ws_od.cell(row=r_od, column=1).value
-        if item_id:
-            clean_item_id = clean_order_item_id(item_id)
-            fsn_val = ws_od.cell(row=r_od, column=9).value
-            sku_val = ws_od.cell(row=r_od, column=8).value
-            title_val = ws_od.cell(row=r_od, column=10).value
-            od_lookup[clean_item_id] = (fsn_val, sku_val, title_val)
+    for row in surviving_dt_rows:
+        order_id_raw = row[4] if len(row) > 4 else ""
+        invoice_id_raw = row[7] if len(row) > 7 else ""
+        new_invoice_id_raw = row[6] if len(row) > 6 else ""
+        shipment_date_raw = row[11] if len(row) > 11 else ""
+        invoice_date_raw = row[12] if len(row) > 12 else ""
+        gst_id_raw = row[1] if len(row) > 1 else ""
+        quantity_raw = row[17] if len(row) > 17 else ""
+        item_cost_raw = row[49] if len(row) > 49 else ""
+        gst_rate_raw = row[41] if len(row) > 41 else ""
+        hsn_raw = row[25] if len(row) > 25 else ""
+        wh_raw = row[0] if len(row) > 0 else ""
+        state_raw = row[39] if len(row) > 39 else ""
+        promotion_discount_raw = row[53] if len(row) > 53 else ""
 
-    # Map remaining DT rows to PR workbook
-    pr_row = 2
-    for r_dt in range(2, ws_dt.max_row + 1):
-        order_id_raw = ws_dt.cell(row=r_dt, column=5).value
-        invoice_id_raw = ws_dt.cell(row=r_dt, column=8).value
-        new_invoice_id_raw = ws_dt.cell(row=r_dt, column=7).value
-        shipment_date_raw = ws_dt.cell(row=r_dt, column=12).value
-        invoice_date_raw = ws_dt.cell(row=r_dt, column=13).value
-        gst_id_raw = ws_dt.cell(row=r_dt, column=2).value
-        quantity_raw = ws_dt.cell(row=r_dt, column=18).value
-        item_cost_raw = ws_dt.cell(row=r_dt, column=50).value
-        gst_rate_raw = ws_dt.cell(row=r_dt, column=42).value
-        hsn_raw = ws_dt.cell(row=r_dt, column=26).value
-        wh_raw = ws_dt.cell(row=r_dt, column=1).value
-        state_raw = ws_dt.cell(row=r_dt, column=40).value
-        promotion_discount_raw = ws_dt.cell(row=r_dt, column=54).value
-        
-        # Format GST Rate with %
         gst_rate_formatted = ""
         if gst_rate_raw is not None:
             gst_rate_formatted = str(gst_rate_raw).strip()
             if gst_rate_formatted and not gst_rate_formatted.endswith('%'):
                 gst_rate_formatted += "%"
-                
-        # Map State code
+
         state_code_formatted = ""
         if state_raw:
             state_str = str(state_raw).strip().upper()
-            state_clean = state_str.replace('&', 'AND')
-            state_clean = " ".join(state_clean.split())
+            state_clean = " ".join(state_str.replace('&', 'AND').split())
             if state_str in STATE_TO_CODE:
                 state_code_formatted = STATE_TO_CODE[state_str]
             elif state_clean in STATE_TO_CODE:
                 state_code_formatted = STATE_TO_CODE[state_clean]
             else:
                 state_code_formatted = state_raw
-            
-        # Write mapped cells to PR
-        ws_pr.cell(row=pr_row, column=1, value=order_id_raw)
-        ws_pr.cell(row=pr_row, column=2, value=invoice_id_raw)
-        ws_pr.cell(row=pr_row, column=3, value=new_invoice_id_raw)
-        ws_pr.cell(row=pr_row, column=5, value=shipment_date_raw)
-        ws_pr.cell(row=pr_row, column=6, value=invoice_date_raw)
-        ws_pr.cell(row=pr_row, column=7, value=gst_id_raw)
-        ws_pr.cell(row=pr_row, column=11, value=quantity_raw)
-        ws_pr.cell(row=pr_row, column=12, value=item_cost_raw)
-        ws_pr.cell(row=pr_row, column=13, value=gst_rate_formatted)
-        ws_pr.cell(row=pr_row, column=15, value=hsn_raw)
-        ws_pr.cell(row=pr_row, column=16, value=wh_raw)
-        ws_pr.cell(row=pr_row, column=17, value=promotion_discount_raw)
-        ws_pr.cell(row=pr_row, column=18, value=state_code_formatted)
-        ws_pr.cell(row=pr_row, column=19, value="")
-        
-        # Lookup OD details
+
+        sku_id_val = ""
+        sku_val = ""
+        title_val = ""
         if order_id_raw:
             clean_order_id = clean_order_item_id(order_id_raw)
             if clean_order_id in od_lookup:
                 sku_id_val, sku_val, title_val = od_lookup[clean_order_id]
-                ws_pr.cell(row=pr_row, column=8, value=sku_id_val)
-                ws_pr.cell(row=pr_row, column=9, value=sku_val)
-                ws_pr.cell(row=pr_row, column=10, value=title_val)
-                
-        pr_row += 1
 
-    # Create nested subfolder name (e.g. 101-(FK27S101-1-9))
+        pr_row_data = [
+            order_id_raw, invoice_id_raw, new_invoice_id_raw, "",
+            shipment_date_raw, invoice_date_raw, gst_id_raw, sku_id_val, sku_val, title_val,
+            quantity_raw, item_cost_raw, gst_rate_formatted, "", hsn_raw, wh_raw,
+            promotion_discount_raw, state_code_formatted, ""
+        ]
+        ws_pr.append(pr_row_data)
+
+    # Subfolder
     subfolder_name = f"{file_prefix}-({invoice_prefix}-{suffix_range})"
     actual_dest_folder = os.path.join(dest_folder, subfolder_name)
     os.makedirs(actual_dest_folder, exist_ok=True)
 
     # Save DT file
-    dt_out_path = os.path.join(actual_dest_folder, dt_new_name)
     for col in ws_dt.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
-        ws_dt.column_dimensions[col_letter].width = max(max_len + 3, 10)
-    wb_dt.save(dt_out_path)
-    
+        ws_dt.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 50)
+    wb_dt.save(os.path.join(actual_dest_folder, dt_new_name))
+
     # Save OD file
-    od_out_path = os.path.join(actual_dest_folder, od_new_name)
     for col in ws_matched_od.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
-        ws_matched_od.column_dimensions[col_letter].width = max(max_len + 3, 10)
-    wb_matched_od.save(od_out_path)
+        ws_matched_od.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 50)
+    wb_matched_od.save(os.path.join(actual_dest_folder, od_new_name))
 
     # Save PR file
-    pr_out_path = os.path.join(actual_dest_folder, pr_new_name)
     for col in ws_pr.columns:
         max_len = max(len(str(cell.value or '')) for cell in col)
         col_letter = get_column_letter(col[0].column)
-        ws_pr.column_dimensions[col_letter].width = max(max_len + 3, 10)
-    wb_pr.save(pr_out_path)
-    
+        ws_pr.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 50)
+    wb_pr.save(os.path.join(actual_dest_folder, pr_new_name))
+
+    # Save GST file if needed
     gst_created = False
     if gst_exported_count > 0:
         for col in ws_gst.columns:
             max_len = max(len(str(cell.value or '')) for cell in col)
             col_letter = get_column_letter(col[0].column)
-            ws_gst.column_dimensions[col_letter].width = max(max_len + 3, 10)
+            ws_gst.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 50)
         wb_gst.save(os.path.join(actual_dest_folder, "GST NOT APPLICABLE.xlsx"))
         gst_created = True
-        
+
+    # Save duplicates file if needed
     dup_created = False
     if duplicates:
         wb_dup = Workbook()
@@ -1750,18 +1752,16 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         ws_dup.title = "Duplicates"
         ws_dup.cell(row=1, column=1, value="DUPLICATE INVOICE").font = Font(bold=True)
         ws_dup.cell(row=1, column=2, value="COUNT").font = Font(bold=True)
-        
         d_row = 2
         for k, v in duplicates.items():
             ws_dup.cell(row=d_row, column=1, value=k)
             ws_dup.cell(row=d_row, column=2, value=v)
             d_row += 1
-            
         ws_dup.column_dimensions['A'].width = 25
         ws_dup.column_dimensions['B'].width = 15
         wb_dup.save(os.path.join(actual_dest_folder, "2 MORE INVOICE.xlsx"))
         dup_created = True
-        
+
     return {
         'prefix': file_prefix,
         'invoice_prefix': invoice_prefix,
@@ -1949,8 +1949,8 @@ def invoice_arrange():
         # Fetch party name mapping from Apps Script
         party_mapping = {}
         try:
-            import requests
-            r = requests.get(APPS_SCRIPT_URL, allow_redirects=True, timeout=10)
+            url = get_apps_script_url()
+            r = requests.get(url, allow_redirects=True, timeout=4)
             if r.status_code == 200:
                 for item in r.json():
                     code = str(item.get('CODE', '')).strip()
@@ -1958,7 +1958,7 @@ def invoice_arrange():
                     if code and party_code:
                         party_mapping[code] = party_code
         except Exception as e:
-            print(f"Error fetching party names for summary: {e}")
+            print(f"Error fetching party names for summary: {e}", flush=True)
 
         # Create Summary.xlsx workbook
         from openpyxl import Workbook
@@ -2300,18 +2300,29 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
     deleted_count = 0
     date_filtered_count = 0
 
-    # Details cleaning and lookup mapping loop
-    for r in range(ws_details.max_row, header_row_idx, -1):
+    # In-memory Details cleaning and lookup mapping (avoids slow openpyxl ws.delete_rows)
+    all_details_rows = list(ws_details.iter_rows(values_only=True))
+    header_rows = [list(r) for r in all_details_rows[:header_row_idx]]
+    data_rows_to_check = all_details_rows[header_row_idx:]
+    
+    surviving_details_rows = []
+    party_data = {}
+
+    for r_vals in data_rows_to_check:
+        row = list(r_vals)
+        while len(row) < 24:
+            row.append("")
+            
         delete_row = False
         
         # 1. Lookup date from data
-        b_val = ws_details.cell(row=r, column=2).value
+        b_val = row[1] if len(row) > 1 else None
         date_val = None
         if b_val:
             b_clean = str(b_val).strip().replace(" ", "").upper()
             if b_clean in data_lookup:
                 date_val = data_lookup[b_clean]
-                ws_details.cell(row=r, column=23, value=date_val)
+                row[22] = date_val # Column 23 (index 22)
 
         # 2. Date Range Filter
         if from_date and to_date and date_val:
@@ -2338,29 +2349,33 @@ def process_flipkart_error(details_bytes, details_filename, data_bytes, data_fil
                 
         # 3. Column V Filter (Delete row if value is "0" or "Price Dispute : 0")
         if not delete_row:
-            v_val = ws_details.cell(row=r, column=22).value
+            v_val = row[21] if len(row) > 21 else None
             if v_val is not None:
                 v_clean = str(v_val).strip()
                 if v_clean == "0" or v_clean == "Price Dispute : 0":
                     delete_row = True
                     deleted_count += 1
                     
-        if delete_row:
-            ws_details.delete_rows(r, 1)
+        if not delete_row:
+            surviving_details_rows.append(row)
+            # Group surviving rows by Warehouse Name (Column D, index 3)
+            party_name = row[3] if len(row) > 3 else None
+            if party_name:
+                party_name = str(party_name).strip()
+                if party_name.lower() != "warehouse name":
+                    if party_name not in party_data:
+                        party_data[party_name] = []
+                    party_data[party_name].append(row)
 
-    # Group surviving rows by Warehouse Name (Column D, index 4)
-    party_data = {}
-    for r in range(header_row_idx + 1, ws_details.max_row + 1):
-        party_name = ws_details.cell(row=r, column=4).value
-        if party_name:
-            party_name = str(party_name).strip()
-            if party_name.lower() == "warehouse name":
-                continue
-            if party_name not in party_data:
-                party_data[party_name] = []
-            row_vals = [ws_details.cell(row=r, column=c).value for c in range(1, ws_details.max_column + 1)]
-            party_data[party_name].append(row_vals)
-            
+    # Rebuild ws_details with surviving rows for Cleaned Details file
+    wb_details = Workbook()
+    ws_details = wb_details.active
+    ws_details.title = "Details"
+    for h_row in header_rows:
+        ws_details.append(h_row)
+    for s_row in surviving_details_rows:
+        ws_details.append(s_row)
+
     temp_work_dir = tempfile.mkdtemp(dir='temp')
     party_files_info = []
     party_records = []
@@ -2598,35 +2613,44 @@ def invoice_error_process():
             
         print(f"[DEBUG Invoice Error] Using Desc Col: {desc_col_idx}, Party Col: {party_col_idx}", flush=True)
         
-        # 1. Clean-up: Delete all rows where Column H is "Already Sale Bill Generated."
+        # 1. Clean-up: In-memory filter out rows where Column H is "Already Sale Bill Generated."
+        all_main_rows = list(ws_main.iter_rows(values_only=True))
+        header_vals = list(all_main_rows[0]) if all_main_rows else []
+        data_main_rows = all_main_rows[1:] if len(all_main_rows) > 1 else []
+
         deleted_count = 0
-        for r in range(ws_main.max_row, 1, -1):
-            val = ws_main.cell(row=r, column=desc_col_idx).value
+        surviving_rows = []
+        for r_vals in data_main_rows:
+            row = list(r_vals)
+            val = row[desc_col_idx - 1] if len(row) >= desc_col_idx else None
             if val is not None and str(val).strip() == "Already Sale Bill Generated.":
-                ws_main.delete_rows(r, 1)
                 deleted_count += 1
-                
+                continue
+            surviving_rows.append(row)
+
         # Create temp work directory
         os.makedirs('temp', exist_ok=True)
         temp_work_dir = tempfile.mkdtemp(dir='temp')
-        
-        # Save cleaned main file
+
+        # Rebuild and save cleaned main file
+        wb_cleaned_main = Workbook()
+        ws_cleaned_main = wb_cleaned_main.active
+        ws_cleaned_main.title = "Cleaned"
+        if header_vals:
+            ws_cleaned_main.append(header_vals)
+        for s_row in surviving_rows:
+            ws_cleaned_main.append(s_row)
+
         cleaned_main_filename = f"Cleaned_{file.filename}"
         cleaned_main_path = os.path.join(temp_work_dir, cleaned_main_filename)
-        wb_main.save(cleaned_main_path)
-        
+        wb_cleaned_main.save(cleaned_main_path)
+
         # 2. Extract data to group by Error and Party
-        data_rows = []
-        for r in range(2, ws_main.max_row + 1):
-            row_vals = [ws_main.cell(row=r, column=c).value for c in range(1, ws_main.max_column + 1)]
-            if any(val is not None for val in row_vals):
-                data_rows.append(row_vals)
-                
-        # Group by Error and Party
+        data_rows = surviving_rows
         groups = {}
         for row in data_rows:
-            desc_val = str(row[desc_col_idx - 1] or '').strip()
-            party_val = str(row[party_col_idx - 1] or '').strip()
+            desc_val = str(row[desc_col_idx - 1] or '').strip() if len(row) >= desc_col_idx else ''
+            party_val = str(row[party_col_idx - 1] or '').strip() if len(row) >= party_col_idx else ''
             
             if not desc_val or not party_val:
                 continue
