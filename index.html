@@ -35,11 +35,11 @@
 
         <!-- Tab Bar Navigation -->
         <nav class="tabs-navigation">
-            <button class="tab-btn active" id="tabMergeBtn" data-target="mergeSection">
-                <i class="fa-solid fa-code-merge"></i> Merge & Clean Orders
-            </button>
-            <button class="tab-btn" id="tabRenameBtn" data-target="renameSection">
+            <button class="tab-btn active" id="tabRenameBtn" data-target="renameSection">
                 <i class="fa-solid fa-signature"></i> Rename Excel Files
+            </button>
+            <button class="tab-btn" id="tabMergeBtn" data-target="mergeSection">
+                <i class="fa-solid fa-code-merge"></i> Merge & Clean Orders
             </button>
             <button class="tab-btn" id="tabSplitBtn" data-target="splitSection">
                 <i class="fa-solid fa-scissors"></i> Separate File
@@ -76,77 +76,9 @@
                 </div>
             </div>
             <!-- ========================================== -->
-            <!-- TAB 1: MERGE & CLEAN ORDERS                -->
+            <!-- TAB 1: RENAME EXCEL FILES (UNIFIED UPLOAD) -->
             <!-- ========================================== -->
-            <section id="mergeSection" class="tab-content active">
-                <!-- Upload Panel -->
-                <div class="card upload-card">
-                    <div class="card-header">
-                        <div class="header-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
-                        <h2>Upload Excel/CSV Files to Merge</h2>
-                    </div>
-                    
-                    <div class="upload-dropzone" id="dropzone">
-                        <input type="file" id="fileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
-                        <div class="dropzone-content">
-                            <i class="fa-solid fa-file-circle-plus upload-icon"></i>
-                            <h3>Drag & drop order files here</h3>
-                            <p>or <span class="browse-btn">Browse Files</span></p>
-                            <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
-                        </div>
-                    </div>
-
-                    <!-- Selected Files List -->
-                    <div class="selected-files-container" id="filesListContainer" style="display: none;">
-                        <h3>Selected Files (<span id="fileCount">0</span>)</h3>
-                        <ul class="files-list" id="filesList"></ul>
-                        <div class="action-bar">
-                            <button class="btn btn-danger" id="clearAllBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
-                            <button class="btn btn-primary" id="processBtn"><i class="fa-solid fa-wand-magic-sparkles"></i> Process & Merge</button>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Result Dashboard -->
-                <div class="card result-card" id="resultCard" style="display: none;">
-                    <div class="result-success-banner">
-                        <i class="fa-solid fa-circle-check success-icon"></i>
-                        <div>
-                            <h2>Processing Complete!</h2>
-                            <p id="successMessage">Successfully merged 0 files with 0 total rows.</p>
-                        </div>
-                    </div>
-
-                    <div class="download-section">
-                        <div class="download-btn-group" style="display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap;">
-                            <a href="/api/download" class="btn btn-download" id="downloadBtn">
-                                <i class="fa-solid fa-file-arrow-down"></i> Download Merged Excel File
-                            </a>
-                            <button type="button" class="btn btn-move-folder" id="moveToFolderBtn">
-                                <i class="fa-solid fa-folder-plus"></i> Move to Create Folder
-                            </button>
-                        </div>
-                        <span class="pincode-note"><i class="fa-solid fa-info-circle"></i> Columns <b>order_item_id</b> (18-digit IDs to Text), <b>sku</b> & <b>product_title</b> (quotes/prefixes removed) are cleaned.</span>
-                    </div>
-
-                    <div class="preview-section">
-                        <h3>Data Preview (First 10 rows)</h3>
-                        <div class="table-wrapper">
-                            <table id="previewTable">
-                                <thead>
-                                    <tr id="tableHeaders"></tr>
-                                </thead>
-                                <tbody id="tableBody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- ========================================== -->
-            <!-- TAB 2: RENAME EXCEL FILES (UNIFIED UPLOAD) -->
-            <!-- ========================================== -->
-            <section id="renameSection" class="tab-content">
+            <section id="renameSection" class="tab-content active">
                 <div class="rename-grid">
                     <!-- Left Side: Config & Status -->
                     <div class="rename-config-col">
@@ -239,7 +171,7 @@
                                 <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Full View
                             </button>
                             <button type="button" class="btn btn-move-folder" id="renameMoveToFolderBtn">
-                                <i class="fa-solid fa-folder-plus"></i> Move to Create Folder
+                                <i class="fa-solid fa-code-merge"></i> Move to Merge
                             </button>
                         </div>
                         <span class="pincode-note" id="renameInfoNote"><i class="fa-solid fa-circle-info"></i> Files have been renamed. Multiple files are packaged in a ZIP archive.</span>
@@ -258,6 +190,195 @@
                                 </thead>
                                 <tbody id="renameLogBody"></tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+                        <!-- ========================================== -->
+            <!-- TAB 2: MERGE & CLEAN ORDERS                -->
+            <!-- ========================================== -->
+            <section id="mergeSection" class="tab-content">
+                <!-- Sub-Tabs Navigation for Merge Modes -->
+                <div class="sub-tabs-bar" style="margin-bottom: 1.5rem; display: flex; gap: 0.75rem; background: #ffffff; padding: 6px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+                    <button class="sub-tab-btn active" id="btnSubMergeGrouped" type="button" style="flex: 1; text-align: center; justify-content: center; display: flex; align-items: center; gap: 8px; border: none; cursor: pointer; padding: 11px 18px; font-weight: 700; font-size: 0.92rem; border-radius: 9px; transition: all 0.2s;">
+                        <i class="fa-solid fa-layer-group"></i> Group Merge by Prefix (-)
+                    </button>
+                    <button class="sub-tab-btn" id="btnSubMergeSingle" type="button" style="flex: 1; text-align: center; justify-content: center; display: flex; align-items: center; gap: 8px; border: none; cursor: pointer; padding: 11px 18px; font-weight: 700; font-size: 0.92rem; border-radius: 9px; transition: all 0.2s;">
+                        <i class="fa-solid fa-file-circle-plus"></i> Single Merge & Clean (All in 1)
+                    </button>
+                </div>
+
+                <!-- SUB-VIEW 1: SINGLE MERGE & CLEAN (ORIGINAL) -->
+                <div id="subMergeSingleView" style="display: none;">
+                    <!-- Upload Panel -->
+                    <div class="card upload-card">
+                        <div class="card-header">
+                            <div class="header-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                            <h2>Upload Excel/CSV Files to Merge</h2>
+                        </div>
+                        
+                        <div class="upload-dropzone" id="dropzone">
+                            <input type="file" id="fileInput" multiple accept=".xlsx, .xls, .csv" class="file-input-hidden">
+                            <div class="dropzone-content">
+                                <i class="fa-solid fa-file-circle-plus upload-icon"></i>
+                                <h3>Drag & drop order files here</h3>
+                                <p>or <span class="browse-btn">Browse Files</span></p>
+                                <span class="file-types">Supports .xlsx, .xls, and .csv formats</span>
+                            </div>
+                        </div>
+
+                        <!-- Selected Files List -->
+                        <div class="selected-files-container" id="filesListContainer" style="display: none;">
+                            <h3>Selected Files (<span id="fileCount">0</span>)</h3>
+                            <ul class="files-list" id="filesList"></ul>
+                            <div class="action-bar">
+                                <button class="btn btn-danger" id="clearAllBtn"><i class="fa-solid fa-trash-can"></i> Clear All</button>
+                                <button class="btn btn-primary" id="processBtn"><i class="fa-solid fa-wand-magic-sparkles"></i> Process & Merge</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Result Dashboard -->
+                    <div class="card result-card" id="resultCard" style="display: none;">
+                        <div class="result-success-banner">
+                            <i class="fa-solid fa-circle-check success-icon"></i>
+                            <div>
+                                <h2>Processing Complete!</h2>
+                                <p id="successMessage">Successfully merged 0 files with 0 total rows.</p>
+                            </div>
+                        </div>
+
+                        <div class="download-section">
+                            <div class="download-btn-group" style="display: flex; gap: 12px; justify-content: center; align-items: center; flex-wrap: wrap;">
+                                <a href="/api/download" class="btn btn-download" id="downloadBtn">
+                                    <i class="fa-solid fa-file-arrow-down"></i> Download Merged Excel File
+                                </a>
+                                <button type="button" class="btn btn-move-folder" id="moveToFolderBtn">
+                                    <i class="fa-solid fa-folder-plus"></i> Move to Create Folder
+                                </button>
+                            </div>
+                            <span class="pincode-note"><i class="fa-solid fa-info-circle"></i> Columns <b>order_item_id</b> (18-digit IDs to Text), <b>sku</b> & <b>product_title</b> (quotes/prefixes removed) are cleaned.</span>
+                        </div>
+
+                        <div class="preview-section">
+                            <h3>Data Preview (First 10 rows)</h3>
+                            <div class="table-wrapper">
+                                <table id="previewTable">
+                                    <thead>
+                                        <tr id="tableHeaders"></tr>
+                                    </thead>
+                                    <tbody id="tableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-VIEW 2: GROUP MERGE BY PREFIX (-) -->
+                <div id="subMergeGroupedView" style="display: block;">
+                    <div style="display: grid; grid-template-columns: 360px 1fr; gap: 24px; align-items: start;">
+                        <!-- Left Column: Upload & Rules -->
+                        <div style="display: flex; flex-direction: column; gap: 18px;">
+                            <!-- Upload Card -->
+                            <div class="card upload-card" style="margin-bottom: 0;">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <div class="header-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                                        <h2 style="font-size: 1.12rem;">Upload Files to Group Merge</h2>
+                                    </div>
+                                    <button class="btn btn-secondary" id="btnResetGroupMerge" type="button" style="padding: 6px 12px; font-size: 0.78rem; font-weight: 600; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;" title="Clear & Reset Files">
+                                        <i class="fa-solid fa-rotate-right"></i> Reset
+                                    </button>
+                                </div>
+                                <div class="upload-dropzone" id="gmrgDropzone" style="margin-top: 12px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; text-align: center; cursor: pointer; transition: all 0.2s ease;">
+                                    <input type="file" id="gmrgFileInput" multiple accept=".xlsx, .xls, .csv, .zip" class="file-input-hidden">
+                                    <div class="dropzone-content">
+                                        <i class="fa-solid fa-file-zipper" style="font-size: 2.2rem; color: #6366f1; margin-bottom: 8px;"></i>
+                                        <h3 id="gmrgFileLabel" style="font-size: 1.05rem; font-weight: 700; color: #1e293b; margin: 4px 0;">Drag & drop files here</h3>
+                                        <p style="font-size: 0.85rem; color: #64748b; margin: 0 0 6px 0;">or <span class="browse-btn" style="color: #6366f1; font-weight: 600; text-decoration: underline;">Browse Files</span></p>
+                                        <span class="file-types" style="font-size: 0.75rem; color: #94a3b8;">Supports .xlsx, .xls, .csv and .zip archives</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Rules Card -->
+                            <div class="card" style="padding: 16px 18px; background: #ffffff; border-radius: 14px; border: 1px solid #e2e8f0;">
+                                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                                    <i class="fa-solid fa-circle-info" style="color: #6366f1; font-size: 1.1rem;"></i>
+                                    <h3 style="margin: 0; font-size: 0.98rem; font-weight: 700; color: #1e293b;">Prefix Grouping Rules</h3>
+                                </div>
+                                <div style="font-size: 0.82rem; color: #475569; line-height: 1.6; display: flex; flex-direction: column; gap: 8px;">
+                                    <p style="margin: 0;"><i class="fa-solid fa-folder-tree" style="color: #6366f1; margin-right: 6px;"></i> Files are auto-grouped by prefix before the hyphen (<code>-</code>). Example: <code>101-Orders.xlsx</code> & <code>101-Returns.xlsx</code> &rarr; Group <b>101</b>.</p>
+                                    <p style="margin: 0;"><i class="fa-solid fa-table-cells" style="color: #0ea5e9; margin-right: 6px;"></i> First file headers are kept, and data rows from subsequent files are merged.</p>
+                                    <p style="margin: 0;"><i class="fa-solid fa-file-excel" style="color: #10b981; margin-right: 6px;"></i> Output naming: <code>[Key]-DropShipOrderReports-FLIPKART-[Key].xlsx</code>.</p>
+                                </div>
+                            </div>
+
+                            <!-- Action Button -->
+                            <button class="btn btn-primary" id="btnGroupMergeRun" type="button" style="display: none; width: 100%; padding: 13px; font-size: 1rem; font-weight: 700; justify-content: center; border-radius: 10px; box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Merge Files
+                            </button>
+                        </div>
+
+                        <!-- Right Column: Preview & Output Table -->
+                        <div style="display: flex; flex-direction: column; gap: 16px;">
+                            <!-- Inline Progress Container -->
+                            <div id="gmrgProgress" style="display: none; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+                                <div style="display: flex; justify-content: space-between; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px;">
+                                    <span id="gmrgProgressText" style="color: #1e293b;">Merging file groups...</span>
+                                    <span id="gmrgProgressPercent" style="color: #6366f1;">0%</span>
+                                </div>
+                                <div style="background: #e2e8f0; height: 8px; border-radius: 999px; overflow: hidden;">
+                                    <div id="gmrgProgressFill" style="background: linear-gradient(90deg, #6366f1, #0ea5e9); height: 100%; width: 0%; transition: width 0.2s;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Preview Card -->
+                            <div class="card result-card" style="display: block; min-height: 420px; border-left: 4px solid #6366f1;">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid #e2e8f0;">
+                                    <div style="display: flex; align-items: center; gap: 12px;">
+                                        <h2 style="font-size: 1.15rem; margin: 0; font-weight: 700; color: #0f172a;">Group Merge Preview</h2>
+                                        <span class="info-tag" id="gmrgGroupCount" style="background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; font-weight: 700; padding: 3px 10px; border-radius: 999px; font-size: 0.78rem;">0 groups detected</span>
+                                    </div>
+                                    <div id="gmrgHeaderActions" style="display: none; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                        <button type="button" class="btn btn-secondary" id="btnGmrgFullview" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 600; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;">
+                                            <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Full View
+                                        </button>
+                                        <button type="button" class="btn btn-move-folder" id="btnGmrgMoveToFolder" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;">
+                                            <i class="fa-solid fa-folder-plus"></i> Move to Create Folder
+                                        </button>
+                                        <button type="button" class="btn btn-download" id="btnGmrgDownloadZip" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; gap: 6px;">
+                                            <i class="fa-solid fa-file-zipper"></i> Download Merged
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <!-- Empty State -->
+                                <div id="gmrgEmptyState" style="text-align: center; padding: 60px 20px;">
+                                    <i class="fa-solid fa-folder-tree" style="font-size: 3.5rem; color: #cbd5e1; margin-bottom: 14px;"></i>
+                                    <h3 style="font-size: 1.15rem; font-weight: 700; color: #334155; margin: 0 0 6px 0;">No files loaded</h3>
+                                    <p style="font-size: 0.88rem; color: #64748b; margin: 0;">Drag & drop order files with hyphen (e.g. <code>101-Orders.xlsx</code>) to auto-group and merge.</p>
+                                </div>
+
+                                <!-- Groups Table Container -->
+                                <div id="gmrgTableContainer" style="display: none; margin-top: 14px;">
+                                    <div class="table-wrapper" style="max-height: 480px; overflow-y: auto;">
+                                        <table class="preview-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+                                            <thead>
+                                                <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0; position: sticky; top: 0; z-index: 2;">
+                                                    <th style="width: 45px; padding: 10px 12px;">#</th>
+                                                    <th style="width: 110px; padding: 10px 12px;">Group Key</th>
+                                                    <th style="padding: 10px 12px;">Source Files</th>
+                                                    <th style="padding: 10px 12px;">Output Filename</th>
+                                                    <th style="width: 120px; text-align: center; padding: 10px 12px;">Actions</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="gmrgPreviewTbody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -284,9 +405,14 @@
                                 </p>
                             </div>
                         </div>
-                        <button type="button" class="btn btn-primary" id="splitMasterProcessBtn" style="padding: 12px 28px; font-size: 0.98rem; font-weight: 700; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #ffffff; border-radius: 10px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; box-shadow: 0 6px 18px rgba(79, 70, 229, 0.35); transition: all 0.2s ease;">
-                            <i class="fa-solid fa-bolt" style="font-size: 1.1rem;"></i> Process All Files (Start All)
-                        </button>
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <button type="button" class="btn btn-primary" id="splitMasterProcessBtn" style="padding: 12px 24px; font-size: 0.95rem; font-weight: 700; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #ffffff; border-radius: 10px; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 10px; box-shadow: 0 6px 18px rgba(79, 70, 229, 0.35); transition: all 0.2s ease;">
+                                <i class="fa-solid fa-bolt" style="font-size: 1.1rem;"></i> Process All Files (Start All)
+                            </button>
+                            <button type="button" class="btn btn-danger" id="splitMasterResetBtn" title="Reset all 4 options" style="padding: 12px 20px; font-size: 0.95rem; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 10px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: all 0.2s ease;">
+                                <i class="fa-solid fa-rotate-left"></i> Reset All
+                            </button>
+                        </div>
                     </div>
 
                     <!-- 2x2 Grid: 2 Options Per Row -->
@@ -306,7 +432,12 @@
                                         <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #64748b;">Split by <b>Col D (FLIPKART)</b> &bull; Headers: <b>2</b></p>
                                     </div>
                                 </div>
-                                <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; flex-shrink: 0;">Prefix Output</span>
+                                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                                    <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px;">Prefix Output</span>
+                                    <button type="button" class="btn" id="splitCardResetBtn1" title="Reset Option 1" style="background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
+                                </div>
                             </div>
 
                             <!-- Upload & Action for Option 1 -->
@@ -351,6 +482,9 @@
                                     <button type="button" class="btn btn-move-folder" id="splitMoveToFolderBtn1" style="padding: 7px 12px; font-size: 0.8rem;">
                                         <i class="fa-solid fa-folder-plus"></i> Move to Folder
                                     </button>
+                                    <button type="button" class="btn btn-danger" id="splitResultResetBtn1" title="Reset Option 1" style="padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -369,7 +503,12 @@
                                         <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #64748b;">Split by <b>Col D (Warehouse/Seller)</b> &bull; Headers: <b>2</b></p>
                                     </div>
                                 </div>
-                                <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; background: #ede9fe; color: #7c3aed; flex-shrink: 0;">Details Bundle</span>
+                                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                                    <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; background: #ede9fe; color: #7c3aed;">Details Bundle</span>
+                                    <button type="button" class="btn" id="splitCardResetBtn2" title="Reset Option 2" style="background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
+                                </div>
                             </div>
 
                             <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -409,6 +548,9 @@
                                     <button type="button" class="btn btn-full-view" id="splitFullViewBtn2" style="background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
                                         <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Full View
                                     </button>
+                                    <button type="button" class="btn btn-danger" id="splitResultResetBtn2" title="Reset Option 2" style="padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -427,7 +569,12 @@
                                         <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #64748b;">Split by <b>Col G (Warehouse/Code)</b> &bull; Headers: <b>2</b></p>
                                     </div>
                                 </div>
-                                <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; background: #fef3c7; color: #d97706; flex-shrink: 0;">Summary Bundle</span>
+                                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                                    <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; background: #fef3c7; color: #d97706;">Summary Bundle</span>
+                                    <button type="button" class="btn" id="splitCardResetBtn3" title="Reset Option 3" style="background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
+                                </div>
                             </div>
 
                             <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -467,6 +614,9 @@
                                     <button type="button" class="btn btn-full-view" id="splitFullViewBtn3" style="background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
                                         <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Full View
                                     </button>
+                                    <button type="button" class="btn btn-danger" id="splitResultResetBtn3" title="Reset Option 3" style="padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -485,7 +635,12 @@
                                         <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #64748b;">Split by <b>Col A (GSTIN/Tax)</b> &bull; Headers: <b>1</b></p>
                                     </div>
                                 </div>
-                                <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; background: #dcfce7; color: #16a34a; flex-shrink: 0;">Tax Bundle</span>
+                                <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                                    <span class="file-tag tag-rename" style="font-size: 0.72rem; padding: 3px 8px; background: #dcfce7; color: #16a34a;">Tax Bundle</span>
+                                    <button type="button" class="btn" id="splitCardResetBtn4" title="Reset Option 4" style="background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 6px; padding: 3px 8px; font-size: 0.72rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
+                                </div>
                             </div>
 
                             <div style="display: flex; flex-direction: column; gap: 12px;">
@@ -525,6 +680,9 @@
                                     <button type="button" class="btn btn-full-view" id="splitFullViewBtn4" style="background: linear-gradient(135deg, #0284c7, #0369a1); color: #fff; padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
                                         <i class="fa-solid fa-up-right-and-down-left-from-center"></i> Full View
                                     </button>
+                                    <button type="button" class="btn btn-danger" id="splitResultResetBtn4" title="Reset Option 4" style="padding: 7px 12px; font-size: 0.8rem; border-radius: 8px; font-weight: 700; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; cursor: pointer; display: inline-flex; align-items: center; gap: 4px;">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -546,12 +704,12 @@
                                 <h2>Folder Create Rules</h2>
                             </div>
                             <div class="instructions-box" style="padding: 16px; color: var(--text-secondary); line-height: 1.6;">
-                                <div style="background: #fee2e2; border-left: 4px solid #dc2626; padding: 12px 14px; border-radius: 6px; margin-bottom: 14px;">
-                                    <div style="font-weight: 700; color: #b91c1c; font-size: 0.9rem; margin-bottom: 2px;">
-                                        <i class="fa-solid fa-triangle-exclamation"></i> Mandatory 3-File Rule:
+                                <div id="fcRuleBoxContainer" style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 12px 14px; border-radius: 6px; margin-bottom: 14px; transition: all 0.3s;">
+                                    <div id="fcRuleBoxTitle" style="font-weight: 700; color: #6d28d9; font-size: 0.9rem; margin-bottom: 2px;">
+                                        <i class="fa-solid fa-circle-check"></i> Mandatory 2-File Rule:
                                     </div>
-                                    <div style="font-size: 0.82rem; color: #991b1b;">
-                                        Every folder <b>must have exactly 3 files</b>! Any folder with less than 3 files will trigger an <b>ERROR</b> and generate a Missing Files Report.
+                                    <div id="fcRuleBoxDesc" style="font-size: 0.82rem; color: #5b21b6;">
+                                        Every folder <b>must have exactly 2 files</b>! Any folder with less than 2 files will trigger an <b>ERROR</b> and generate a Missing Files Report.
                                     </div>
                                 </div>
 
@@ -574,12 +732,28 @@
                     <!-- Right Side: Multi File Dropzone & Configuration -->
                     <div class="rename-files-col">
                         <div class="card upload-card">
-                            <div class="card-header" style="justify-content: space-between; align-items: center;">
+                            <div class="card-header" style="justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <div class="header-icon" style="background: #ecfdf5; color: #059669;"><i class="fa-solid fa-folder-plus"></i></div>
-                                    <h2 id="fcUploadTitle">Select Files to Group (3 Files Rule)</h2>
+                                    <h2 id="fcUploadTitle">Select Files to Group (2 Files Rule)</h2>
                                 </div>
-                                <span class="badge" style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; font-weight: 700; font-size: 0.75rem; padding: 4px 8px; border-radius: 6px;">Client-side Only</span>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <!-- Rule Switch Toggle: Old (3 Files) vs New (2 Files) -->
+                                    <label class="fc-rule-toggle-container" id="fcRuleContainer" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer; background: #f1f5f9; padding: 4px 10px; border-radius: 999px; border: 1.5px solid #cbd5e1; user-select: none;" title="Rule: ON = New (2 Files / Folder), OFF = Old (3 Files / Folder)">
+                                        <span style="position: relative; width: 38px; height: 20px; display: inline-block;">
+                                            <input type="checkbox" id="toggleFcRule" checked autocomplete="off" style="opacity: 0; width: 0; height: 0;">
+                                            <span class="fc-rule-slider" id="fcRuleSlider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #6366f1; transition: .3s; border-radius: 20px;">
+                                                <span class="fc-rule-knob" id="fcRuleKnob" style="position: absolute; content: ''; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; transition: .3s; border-radius: 50%; transform: translateX(18px);"></span>
+                                            </span>
+                                        </span>
+                                        <span id="fcRuleText" style="font-size: 0.8rem; font-weight: 700; color: #4f46e5;">New (2 Files)</span>
+                                    </label>
+                                    <span class="badge" id="fcRuleTag" style="background: #ede9fe; color: #6d28d9; border: 1px solid #ddd6fe; font-weight: 700; font-size: 0.75rem; padding: 4px 8px; border-radius: 6px;">New: 2 Files / Folder</span>
+                                    <span class="badge" style="background: #ecfdf5; color: #059669; border: 1px solid #a7f3d0; font-weight: 700; font-size: 0.75rem; padding: 4px 8px; border-radius: 6px;">Client-side Only</span>
+                                    <button type="button" class="btn btn-danger" id="fcResetTopBtn" style="padding: 4px 11px; font-size: 0.78rem; font-weight: 700; background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;" title="Clean reset all files and folders">
+                                        <i class="fa-solid fa-rotate-left"></i> Reset
+                                    </button>
+                                </div>
                             </div>
                             
                             <!-- Mode Selector: Group Files vs Process Folders -->
@@ -663,7 +837,306 @@
             <!-- TAB 5: INVOICE ARRANGE                     -->
             <!-- ========================================== -->
             <section id="invoiceSection" class="tab-content">
-                <div class="rename-layout-grid">
+                <!-- Sub-Tabs Navigation for Invoice Arrange Modes -->
+                <div class="sub-tabs-bar" style="margin-bottom: 1.5rem; display: flex; gap: 0.75rem; background: #ffffff; padding: 6px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+                    <button class="sub-tab-btn active" id="btnSubInvoiceNew" type="button" style="flex: 1; text-align: center; justify-content: center; display: flex; align-items: center; gap: 8px; border: none; cursor: pointer; padding: 11px 18px; font-weight: 700; font-size: 0.92rem; border-radius: 9px; transition: all 0.2s;">
+                        <i class="fa-solid fa-bolt" style="color: #6366f1;"></i> New (2 Files Logic / Processor)
+                    </button>
+                    <button class="sub-tab-btn" id="btnSubInvoiceOld" type="button" style="flex: 1; text-align: center; justify-content: center; display: flex; align-items: center; gap: 8px; border: none; cursor: pointer; padding: 11px 18px; font-weight: 700; font-size: 0.92rem; border-radius: 9px; transition: all 0.2s;">
+                        <i class="fa-solid fa-clock-rotate-left" style="color: #64748b;"></i> Old (3 Files Logic / Original)
+                    </button>
+                </div>
+
+                <!-- SUB-VIEW 1: NEW (2-FILE PROCESSOR ENGINE) -->
+                <div id="subInvoiceNewView">
+                    <div class="rename-layout-grid">
+                        <!-- Left Side: Instructions & Rules -->
+                        <div class="rename-config-col">
+                            <div class="card options-card" style="margin-bottom: 1rem;">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <div class="header-icon" style="background: #ede9fe; color: #7c3aed;"><i class="fa-solid fa-bolt"></i></div>
+                                        <div>
+                                            <h2 style="font-size: 1.05rem; font-weight: 700; color: #1e293b; margin: 0;">2-File Processor Rules</h2>
+                                            <span style="font-size: 0.72rem; color: #6d28d9; font-weight: 600; background: #ede9fe; padding: 2px 8px; border-radius: 10px;">New: 2 Files Rule</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="instructions-box" style="padding: 16px; color: var(--text-secondary); line-height: 1.6;">
+                                    <p style="margin-bottom: 10px; font-weight: 600; color: #1e293b;">Required Uploads (Exactly 2 Files per Party):</p>
+                                    <ul style="padding-left: 20px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem;">
+                                        <li><b>DropShip File</b>: Contains <code>FLIPKART_MERGED_ORDERS</code>, <code>DropShip</code>, or <code>Seller_Orders_Report</code>.</li>
+                                        <li><b>IndoPrimo File</b>: Contains <code>SaleData</code>, <code>IndoPrimo</code>, or <code>Sale Item Details</code>.</li>
+                                    </ul>
+                                    <p style="margin-bottom: 10px; font-weight: 600; color: #1e293b;">Automated Execution Pipeline:</p>
+                                    <ol style="padding-left: 20px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;">
+                                        <li><b>Dictionary Match</b>: Builds key <code>=B3&G3</code> from IndoPrimo file.</li>
+                                        <li><b>DropShip Filter</b>: Matches <code>=G2&E2</code> (or Col DW) and <b>deletes matched rows</b>.</li>
+                                        <li><b>Date & Metadata</b>: Calculates Date Range & B2/P2 values.</li>
+                                        <li><b>GST Not Applicable</b>: Auto-detects 0/missing tax rate, creates <code>[Party]-GST NOT APPLICABLE.xlsx</code> with shaded rows & 5% adjusted tax.</li>
+                                        <li><b>Invoice Range</b>: Extrapolates Min and Max from Col G (EE Invoice No) e.g. <code>101-(2-9)</code>.</li>
+                                        <li><b>Duplicate Invoices</b>: Checks duplicate invoices in Col G, exports <code>[Party]-2 MORE INVOICE.xlsx</code>.</li>
+                                        <li><b>18-Column OD Master</b>: Generates standard 18-column Master Combined sheet.</li>
+                                        <li><b>Clean DT File</b>: Compiles DT workbook with cell highlights.</li>
+                                    </ol>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Side: Upload Card & Confirm Mapping -->
+                        <div class="rename-files-col">
+                            <div class="card upload-card" style="margin-bottom: 1rem;">
+                                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                                    <div style="display: flex; align-items: center; gap: 10px;">
+                                        <div class="header-icon" style="background: #e0f2fe; color: #0284c7;"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                                        <div>
+                                            <h2 style="font-size: 1.05rem; font-weight: 700; color: #1e293b; margin: 0;">Upload Files to Process</h2>
+                                            <span style="font-size: 0.72rem; color: #64748b;">Upload single party files or batch ZIP/folder</span>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-secondary" id="btnInvNewReset" type="button" style="padding: 6px 12px; font-size: 0.78rem; border-radius: 8px;">
+                                        <i class="fa-solid fa-rotate-right"></i> Clean & Reset
+                                    </button>
+                                </div>
+
+                                <div class="upload-dropzone" id="invNewDropzone" style="cursor: pointer; margin-top: 10px;">
+                                    <input type="file" id="invNewFileInput" multiple accept=".xlsx,.xls,.csv,.zip" class="hidden-input">
+                                    <input type="file" id="invNewFolderInput" webkitdirectory directory multiple class="hidden-input">
+                                    <div class="dropzone-content">
+                                        <i class="fa-solid fa-folder-open upload-icon" style="font-size: 2.2rem; color: #6366f1; margin-bottom: 10px;"></i>
+                                        <h3 style="font-size: 1.05rem; font-weight: 700; color: #1e293b; margin-bottom: 4px;">Drag & Drop files or folders here</h3>
+                                        <p style="color: #64748b; font-size: 0.82rem; margin-bottom: 12px;">or choose an option below</p>
+                                        <div style="display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                                            <button type="button" class="btn btn-secondary" id="invNewSelectFilesBtn" style="padding: 8px 16px; font-size: 0.82rem; font-weight: 600;">
+                                                <i class="fa-regular fa-file-lines"></i> Files / ZIP
+                                            </button>
+                                            <button type="button" class="btn btn-primary" id="invNewSelectFolderBtn" style="padding: 8px 16px; font-size: 0.82rem; font-weight: 600;">
+                                                <i class="fa-solid fa-folder-plus"></i> Select Folder
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- File Mapping Card -->
+                                <div id="invNewMappingCard" style="display: none; margin-top: 16px; padding: 14px; background: #f8fafc; border-radius: 10px; border: 1px solid #e2e8f0;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                        <h3 id="invNewMappingTitle" style="margin: 0; font-size: 0.92rem; font-weight: 700; color: #1e293b;">Confirm File Mapping</h3>
+                                    </div>
+                                    <div id="invNewMappingSingle" style="display: flex; flex-direction: column; gap: 10px;">
+                                        <div>
+                                            <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #475569; margin-bottom: 4px;">DropShip File (Orders Report)</label>
+                                            <select id="invNewSelectOdFile" class="select-field"></select>
+                                        </div>
+                                        <div>
+                                            <label style="display: block; font-size: 0.75rem; font-weight: 600; color: #475569; margin-bottom: 4px;">IndoPrimo File (Sale Item Details)</label>
+                                            <select id="invNewSelectDtFile" class="select-field"></select>
+                                        </div>
+                                    </div>
+                                    <div id="invNewMappingBatch" style="display: none; color: #475569; font-size: 0.82rem; line-height: 1.4;">
+                                        <p style="color: #059669; font-weight: 700; display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                                            <i class="fa-solid fa-circle-check"></i> Batch Mode Active (Auto-pairing)
+                                        </p>
+                                        <p id="invNewBatchDetectedText" style="margin: 0; font-weight: 500;">Detected unique parties: </p>
+                                        <p style="margin-top: 4px; font-size: 0.76rem; color: #64748b;">DropShip and IndoPrimo files will be matched automatically for each party group.</p>
+                                    </div>
+                                    <div style="margin-top: 14px; display: flex; justify-content: flex-end;">
+                                        <button type="button" class="btn btn-primary" id="invNewBtnProcessAction" style="padding: 10px 20px; font-weight: 700; font-size: 0.88rem; border-radius: 8px;">
+                                            <i class="fa-solid fa-play"></i> Process & Rename Files
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Inline Progress Bar -->
+                    <div class="inline-progress" id="invNewProgressCard" style="display: none; margin-bottom: 1.5rem;">
+                        <div class="inline-progress-header">
+                            <span class="progress-percent" id="invNewProgressPercent">0%</span>
+                            <span class="progress-status" id="invNewLoadingText">Processing files...</span>
+                        </div>
+                        <div class="progress-bar-wrapper">
+                            <div class="progress-bar-fill" id="invNewProgressBarFill"></div>
+                        </div>
+                    </div>
+
+                    <!-- Dashboard Statistics & Output Cards -->
+                    <div id="invNewDashboardControls" style="display: none;">
+                        <!-- Stats Grid -->
+                        <div class="stats-grid" style="margin-bottom: 1.25rem;">
+                            <div class="stat-box border-od">
+                                <span class="stat-label">Total Processed</span>
+                                <span class="stat-value text-od" id="invNewStatTotal">0</span>
+                            </div>
+                            <div class="stat-box border-od">
+                                <span class="stat-label">OD Matched</span>
+                                <span class="stat-value text-od" id="invNewStatOd">0</span>
+                            </div>
+                            <div class="stat-box border-dt">
+                                <span class="stat-label">DT Matched</span>
+                                <span class="stat-value text-dt" id="invNewStatDt">0</span>
+                            </div>
+                            <div class="stat-box" style="border-left: 3px solid #059669;">
+                                <span class="stat-label">DT Sold (NEW)</span>
+                                <span class="stat-value" id="invNewStatDtSold" style="color: #059669;">0</span>
+                            </div>
+                            <div class="stat-box" style="border-left: 3px solid #dc2626;">
+                                <span class="stat-label">DT Cancelled</span>
+                                <span class="stat-value" id="invNewStatDtCancelled" style="color: #dc2626;">0</span>
+                            </div>
+                            <div class="stat-box border-unmatched">
+                                <span class="stat-label">Unmatched</span>
+                                <span class="stat-value text-unmatched" id="invNewStatUnmatched">0</span>
+                            </div>
+                        </div>
+
+                        <!-- 2-Column Info & Range Row -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; margin-bottom: 1.25rem;">
+                            <!-- Details Log Summary Card -->
+                            <div class="card" style="padding: 16px; margin: 0;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <h3 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: #1e293b;">
+                                        <i class="fa-solid fa-table-list" style="color: #6366f1; margin-right: 6px;"></i> Details Log Summary
+                                    </h3>
+                                    <button type="button" class="btn btn-secondary" id="invNewBtnCopyLog" title="Copy Log Row for Excel" style="padding: 5px 10px; font-size: 0.75rem;">
+                                        <i class="fa-solid fa-copy"></i> Copy Log Row
+                                    </button>
+                                </div>
+                                <p style="color: #64748b; font-size: 0.75rem; margin-bottom: 10px;">Formatted to paste directly into your main details sheet in Excel:</p>
+                                <div style="background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; overflow-x: auto;">
+                                    <table style="width: 100%; border-collapse: collapse; font-family: monospace; font-size: 0.75rem; text-align: left; white-space: nowrap;">
+                                        <thead>
+                                            <tr style="border-bottom: 1px solid #cbd5e1; color: #64748b;">
+                                                <th style="padding: 4px 8px;">File Name</th>
+                                                <th style="padding: 4px 8px;">Invoice Range</th>
+                                                <th style="padding: 4px 8px;">Date Range</th>
+                                                <th style="padding: 4px 8px;">B2 / P2 Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td id="invNewLogTdFilename" style="padding: 6px 8px; font-weight: 600; color: #1e293b;">—</td>
+                                                <td id="invNewLogTdRange" style="padding: 6px 8px; color: #2563eb; font-weight: 600;">—</td>
+                                                <td id="invNewLogTdDates" style="padding: 6px 8px; color: #059669; font-weight: 600;">—</td>
+                                                <td id="invNewLogTdB2p2" style="padding: 6px 8px; color: #d97706; font-weight: 600;">—</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- DT Invoice Range & Cancelled Card -->
+                            <div class="card" style="padding: 16px; margin: 0;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                    <h3 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: #1e293b;">
+                                        <i class="fa-solid fa-arrow-up-right-dots" style="color: #2563eb; margin-right: 6px;"></i> DT Invoice Range
+                                    </h3>
+                                    <button type="button" class="btn btn-secondary" id="invNewBtnCopyRange" title="Copy Invoice Range" style="padding: 5px 10px; font-size: 0.75rem;">
+                                        <i class="fa-solid fa-copy"></i> Copy Range
+                                    </button>
+                                </div>
+                                <div style="background: #eff6ff; padding: 12px; border-radius: 8px; border: 1px solid #bfdbfe; margin-bottom: 12px;">
+                                    <span style="font-size: 0.75rem; color: #1d4ed8; display: block; font-weight: 600; margin-bottom: 2px;">Generated Range (ARRANGE!E2):</span>
+                                    <strong id="invNewRangeValue" style="font-size: 1.35rem; color: #1e40af; font-weight: 800; letter-spacing: 0.5px;">—</strong>
+                                </div>
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                        <span style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: #dc2626;">Cancelled / Duplicate Invoices:</span>
+                                        <button type="button" class="btn btn-secondary" id="invNewBtnCopyCancelled" title="Copy Cancelled Invoices" style="padding: 2px 8px; font-size: 0.7rem;">
+                                            <i class="fa-solid fa-copy"></i> Copy
+                                        </button>
+                                    </div>
+                                    <div id="invNewCancelledInvoicesList" style="font-family: monospace; font-size: 0.75rem; max-height: 70px; overflow-y: auto; background: #fff; border-radius: 6px; padding: 6px; border: 1px solid #e2e8f0; display: flex; flex-wrap: wrap; gap: 6px;">
+                                        <span style="color: #94a3b8;">None logged yet...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ZIP Settings & Operations -->
+                        <div class="card" style="padding: 16px; margin-bottom: 1.25rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+                                <h3 style="margin: 0; font-size: 0.95rem; font-weight: 700; color: #1e293b;">
+                                    <i class="fa-solid fa-file-zipper" style="color: #059669; margin-right: 6px;"></i> Output Package & Downloads
+                                </h3>
+                                <div style="display: flex; gap: 8px;">
+                                    <button type="button" class="btn btn-danger" id="invNewBtnClear" style="padding: 8px 14px; font-size: 0.82rem;">
+                                        <i class="fa-solid fa-trash-can"></i> Clear All
+                                    </button>
+                                    <button type="button" class="btn btn-download" id="invNewBtnDownloadZip" style="padding: 8px 18px; font-size: 0.88rem; font-weight: 700;">
+                                        <i class="fa-solid fa-download"></i> Download Renamed ZIP
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; font-size: 0.82rem;">
+                                <div>
+                                    <label style="display: block; font-weight: 600; color: #475569; margin-bottom: 4px;">Save Processed OD File As:</label>
+                                    <input type="text" id="invNewInputOdName" placeholder="OD_Processed" class="select-field" value="OD_Processed">
+                                </div>
+                                <div>
+                                    <label style="display: block; font-weight: 600; color: #475569; margin-bottom: 4px;">Save Processed DT File As:</label>
+                                    <input type="text" id="invNewInputDtName" placeholder="DT_Processed" class="select-field" value="DT_Processed">
+                                </div>
+                                <div>
+                                    <label style="display: block; font-weight: 600; color: #475569; margin-bottom: 4px;">Save Combined Master File As:</label>
+                                    <input type="text" id="invNewInputCombinedName" placeholder="Combined_Output" class="select-field" value="Combined_Output">
+                                </div>
+                            </div>
+                            <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                                <div>
+                                    <div style="font-size: 0.88rem; font-weight: 700; color: #1e293b;">ZIP Folder Structure Preference</div>
+                                    <div style="font-size: 0.76rem; color: #64748b;">Keep nested party and range folders in the downloaded ZIP (like Myntra)</div>
+                                </div>
+                                <label style="display: inline-flex; align-items: center; cursor: pointer; gap: 8px; user-select: none;">
+                                    <input type="checkbox" id="invNewToggleStructure" checked style="width: 17px; height: 17px; accent-color: #059669; cursor: pointer;">
+                                    <span style="font-size: 0.84rem; font-weight: 600; color: #334155;">Keep Folder Hierarchy</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Processing Console Logs -->
+                        <div class="card" style="padding: 16px; margin-bottom: 1.25rem;">
+                            <h3 style="margin: 0 0 8px 0; font-size: 0.85rem; font-weight: 700; color: #475569; text-transform: uppercase;">
+                                <i class="fa-solid fa-terminal" style="margin-right: 6px;"></i> Processing Console Logs
+                            </h3>
+                            <div id="invNewConsoleLogs" style="font-family: monospace; font-size: 0.75rem; max-height: 120px; overflow-y: auto; background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px; line-height: 1.5; display: flex; flex-direction: column; gap: 4px;">
+                                <div style="color: #94a3b8;">Ready to run pipeline...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Preview Table Card -->
+                    <div class="card" id="invNewPreviewCard" style="margin-bottom: 1rem;">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                            <h2 style="font-size: 1.05rem; font-weight: 700; color: #1e293b; margin: 0;">File Processing Preview</h2>
+                            <div style="width: 240px;">
+                                <input type="text" id="invNewSearchInput" placeholder="Search files..." class="select-field" style="padding: 6px 12px;">
+                            </div>
+                        </div>
+                        <div id="invNewEmptyState" style="text-align: center; padding: 3rem 1rem; color: #94a3b8;">
+                            <i class="fa-solid fa-file-excel" style="font-size: 2.5rem; color: #cbd5e1; margin-bottom: 10px;"></i>
+                            <h3 style="font-size: 1rem; font-weight: 600; color: #64748b; margin-bottom: 4px;">No files processed yet</h3>
+                            <p style="font-size: 0.82rem; margin: 0;">Upload a ZIP, folder, or individual files to view the preview and rename comparison.</p>
+                        </div>
+                        <div class="table-wrapper" id="invNewTableContainer" style="display: none;">
+                            <table class="preview-table">
+                                <thead>
+                                    <tr>
+                                        <th>Original Name & Path</th>
+                                        <th>Match Category</th>
+                                        <th>Renamed File Name</th>
+                                        <th style="width: 100px; text-align: center;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="invNewFilesTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-VIEW 2: OLD (3-FILES ORIGINAL) -->
+                <div id="subInvoiceOldView" style="display: none;">
+                    <div class="rename-layout-grid">
                     <!-- Left Side: Instructions -->
                     <div class="rename-config-col">
                         <div class="card options-card">
@@ -753,6 +1226,7 @@
                             </table>
                         </div>
                     </div>
+                </div>
                 </div>
             </section>
 
@@ -1048,7 +1522,7 @@
                         <i class="fa-solid fa-file-zipper"></i> Download ZIP
                     </button>
                     <button type="button" class="btn btn-move-folder" id="fullViewMoveToFolderBtn" style="padding: 8px 16px; font-size: 0.85rem;">
-                        <i class="fa-solid fa-folder-plus"></i> Move to Create Folder
+                        <i class="fa-solid fa-code-merge"></i> Move to Merge
                     </button>
                     <button type="button" class="btn btn-danger" id="renameFullViewCloseBtn" style="padding: 8px 14px; font-size: 0.85rem; border-radius: 8px;">
                         <i class="fa-solid fa-xmark"></i> Close
@@ -1163,6 +1637,9 @@
                     <button type="button" class="btn btn-move-folder" id="splitFullViewMoveToFolderBtn" style="padding: 8px 16px; font-size: 0.85rem; display: none;">
                         <i class="fa-solid fa-folder-plus"></i> Move to Create Folder
                     </button>
+                    <button type="button" class="btn btn-danger" id="modalSplitResetBtn" title="Reset this option" style="padding: 8px 16px; font-size: 0.85rem; border-radius: 8px; background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-rotate-left"></i> Reset Option
+                    </button>
                     <button type="button" class="btn btn-danger" id="splitFullViewCloseBtn" style="padding: 8px 14px; font-size: 0.85rem; border-radius: 8px;">
                         <i class="fa-solid fa-xmark"></i> Close
                     </button>
@@ -1229,6 +1706,9 @@
                     <button type="button" class="btn btn-move-folder" id="modalFcMoveToInvoiceBtn" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #fff; border: none; border-radius: 8px; cursor: pointer;">
                         <i class="fa-solid fa-file-invoice"></i> Move to Invoice Arrange
                     </button>
+                    <button type="button" class="btn btn-danger" id="modalFcResetBtn" style="padding: 7px 14px; font-size: 0.82rem; font-weight: 700; background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;" title="Clean reset all folders">
+                        <i class="fa-solid fa-rotate-left"></i> Reset
+                    </button>
                     <button type="button" class="rename-modal-close-icon-btn" id="closeFcModalBtn" title="Close Window">
                         <i class="fa-solid fa-xmark"></i>
                     </button>
@@ -1256,6 +1736,7 @@
                 </div>
             </div>
 
+            <input type="file" id="fcFolderUploadInput" multiple accept=".xlsx,.xls,.csv" style="display: none;">
             <!-- Accordion Container -->
             <div style="flex: 1; overflow-y: auto; padding: 20px; background: #f8fafc;" id="modalFcAccordionContainer">
                 <div style="text-align: center; padding: 3rem 1rem; color: #94a3b8;">
@@ -1329,5 +1810,76 @@
 
     <!-- Custom JavaScript -->
     <script src="/static/js/app.js?v=19.4"></script>
+    <!-- ==================================================== -->
+    <!-- EDIT GROUP KEY MODAL (GROUP MERGE)                  -->
+    <!-- ==================================================== -->
+    <div class="custom-modal-backdrop" id="editGroupKeyModal" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.75); backdrop-filter: blur(5px); z-index: 99999999; align-items: center; justify-content: center;">
+        <div class="custom-modal-card" style="background: #ffffff; border-radius: 16px; width: 90%; max-width: 440px; padding: 24px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3); border: 1px solid #e2e8f0;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+                <div style="width: 40px; height: 40px; border-radius: 50%; background: #ecfdf5; color: #059669; display: flex; align-items: center; justify-content: center; font-size: 1.2rem;">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                </div>
+                <div>
+                    <h3 style="margin: 0; font-size: 1.15rem; font-weight: 700; color: #1e293b;">Edit Group Key</h3>
+                    <p style="margin: 2px 0 0 0; font-size: 0.8rem; color: #64748b;">Regroup all source files under this prefix</p>
+                </div>
+            </div>
+            <div style="margin-bottom: 12px; text-align: left;">
+                <label style="font-size: 0.75rem; color: #64748b; font-weight: 600; display: block; margin-bottom: 4px;">Current Group Key:</label>
+                <div id="editGroupKeyCurrent" style="font-family: monospace; font-size: 0.95rem; font-weight: 700; color: #4f46e5; background: #f1f5f9; padding: 6px 12px; border-radius: 8px;"></div>
+            </div>
+            <div style="margin-bottom: 18px; text-align: left;">
+                <label style="font-size: 0.75rem; color: #64748b; font-weight: 600; display: block; margin-bottom: 4px;">New Group Key:</label>
+                <input type="text" id="editGroupKeyInput" style="width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 0.95rem; font-weight: 600;" placeholder="Enter new group prefix...">
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                <button type="button" class="btn btn-secondary" id="btnCancelEditGroupKey" style="padding: 8px 18px; font-size: 0.9rem; border-radius: 8px;">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btnSaveEditGroupKey" style="padding: 8px 22px; font-size: 0.9rem; border-radius: 8px; font-weight: 600;"><i class="fa-solid fa-check"></i> Save Key</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================================================== -->
+    <!-- FULL VIEW MODAL (GROUP MERGE)                        -->
+    <!-- ==================================================== -->
+    <div class="full-view-modal-backdrop" id="gmrgFullViewModal" style="display: none; z-index: 999999;">
+        <div class="full-view-card">
+            <div class="full-view-header">
+                <div class="full-view-header-title">
+                    <i class="fa-solid fa-layer-group" style="font-size: 1.3rem; color: #6366f1;"></i>
+                    <div>
+                        <h2 style="font-size: 1.15rem; margin: 0; font-weight: 700;">Grouped Merge — Full View</h2>
+                        <span id="gmrgFullViewCount" style="font-size: 0.8rem; color: #64748b;">0 groups detected</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <button type="button" class="btn btn-danger" id="btnCloseGmrgFullview" style="padding: 7px 14px; font-size: 0.85rem; border-radius: 8px;">
+                        <i class="fa-solid fa-xmark"></i> Close
+                    </button>
+                </div>
+            </div>
+            <div class="full-view-body" style="padding: 16px 24px; display: flex; flex-direction: column; gap: 14px; flex: 1; overflow: hidden;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px;">
+                    <span style="font-size: 0.82rem; color: #64748b;">Click 👁️ to inspect spreadsheet data, or ✏️ to edit group prefix.</span>
+                    <input type="text" id="gmrgFullViewSearch" placeholder="Search group key or filename..." style="max-width: 320px; width: 100%; padding: 7px 12px; border: 1.5px solid #cbd5e1; border-radius: 8px; font-size: 0.85rem;">
+                </div>
+                <div class="table-wrapper" style="flex: 1; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 8px;">
+                    <table class="preview-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+                        <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 2; border-bottom: 2px solid #e2e8f0;">
+                            <tr>
+                                <th style="width: 45px; padding: 10px 12px;">#</th>
+                                <th style="width: 110px; padding: 10px 12px;">Group Key</th>
+                                <th style="padding: 10px 12px;">Source Files</th>
+                                <th style="padding: 10px 12px;">Output Filename</th>
+                                <th style="width: 125px; text-align: center; padding: 10px 12px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tbodyGmrgFullView"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>

@@ -67,8 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // TAB SYSTEM
     // ----------------------------------------------------
-    const tabMergeBtn = document.getElementById('tabMergeBtn');
     const tabRenameBtn = document.getElementById('tabRenameBtn');
+    const tabMergeBtn = document.getElementById('tabMergeBtn');
     const tabSplitBtn = document.getElementById('tabSplitBtn');
     const tabFolderBtn = document.getElementById('tabFolderBtn');
     const tabInvoiceBtn = document.getElementById('tabInvoiceBtn');
@@ -76,8 +76,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const tabFlipkartErrorBtn = document.getElementById('tabFlipkartErrorBtn');
     const tabInvoiceErrorBtn = document.getElementById('tabInvoiceErrorBtn');
     const tabErrorTrackerBtn = document.getElementById('tabErrorTrackerBtn');
-    const mergeSection = document.getElementById('mergeSection');
     const renameSection = document.getElementById('renameSection');
+    const mergeSection = document.getElementById('mergeSection');
     const splitSection = document.getElementById('splitSection');
     const folderSection = document.getElementById('folderSection');
     const invoiceSection = document.getElementById('invoiceSection');
@@ -113,20 +113,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setActiveTab(activeBtn, activeSec) {
-        [tabMergeBtn, tabRenameBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn, tabInvoiceErrorBtn, tabErrorTrackerBtn].forEach(btn => {
+        [tabRenameBtn, tabMergeBtn, tabSplitBtn, tabFolderBtn, tabInvoiceBtn, tabPartyBtn, tabFlipkartErrorBtn, tabInvoiceErrorBtn, tabErrorTrackerBtn].forEach(btn => {
             if (btn) btn.classList.remove('active');
         });
-        [mergeSection, renameSection, splitSection, folderSection, invoiceSection, partySection, flipkartErrorSection, invoiceErrorSection, errorTrackerSection].forEach(sec => {
+        [renameSection, mergeSection, splitSection, folderSection, invoiceSection, partySection, flipkartErrorSection, invoiceErrorSection, errorTrackerSection].forEach(sec => {
             if (sec) sec.classList.remove('active');
         });
         if (activeBtn) activeBtn.classList.add('active');
         if (activeSec) activeSec.classList.add('active');
     }
 
-    if (tabMergeBtn) tabMergeBtn.addEventListener('click', () => setActiveTab(tabMergeBtn, mergeSection));
     if (tabRenameBtn) tabRenameBtn.addEventListener('click', () => {
         setActiveTab(tabRenameBtn, renameSection);
         checkMappingStatus();
+    });
+    if (tabMergeBtn) tabMergeBtn.addEventListener('click', () => {
+        setActiveTab(tabMergeBtn, mergeSection);
+        if (typeof btnSubMergeGrouped !== 'undefined' && btnSubMergeGrouped) {
+            btnSubMergeGrouped.click();
+        }
     });
     if (tabSplitBtn) tabSplitBtn.addEventListener('click', () => setActiveTab(tabSplitBtn, splitSection));
     if (tabFolderBtn) tabFolderBtn.addEventListener('click', () => setActiveTab(tabFolderBtn, folderSection));
@@ -141,6 +146,22 @@ document.addEventListener('DOMContentLoaded', () => {
         setActiveTab(tabErrorTrackerBtn, errorTrackerSection);
         renderErrorTracker();
     });
+
+    // Cache and preload Flipkart party list
+    let flipkartPartyList = [];
+    try {
+        const cachedParties = localStorage.getItem('flipkart_parties_cache');
+        if (cachedParties) {
+            flipkartPartyList = JSON.parse(cachedParties);
+            window.flipkartPartyList = flipkartPartyList;
+        }
+    } catch (e) {}
+    // Fetch parties in background on load
+    setTimeout(() => {
+        if (typeof fetchPartiesList === 'function') {
+            fetchPartiesList().catch(() => {});
+        }
+    }, 100);
 
     // Global Loader
     const loadingOverlay = document.getElementById('loadingOverlay');
@@ -708,6 +729,869 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
     // ====================================================
+    
+    // ====================================================
+    // SUB-TABS FOR MERGE & CLEAN ORDERS
+    // (Mode 1: Single Merge & Clean, Mode 2: Group Merge by Prefix)
+    // ====================================================
+    const btnSubMergeSingle = document.getElementById('btnSubMergeSingle');
+    const btnSubMergeGrouped = document.getElementById('btnSubMergeGrouped');
+    const subMergeSingleView = document.getElementById('subMergeSingleView');
+    const subMergeGroupedView = document.getElementById('subMergeGroupedView');
+
+    if (btnSubMergeSingle && btnSubMergeGrouped) {
+        btnSubMergeSingle.addEventListener('click', () => {
+            btnSubMergeSingle.classList.add('active');
+            btnSubMergeGrouped.classList.remove('active');
+            if (subMergeSingleView) subMergeSingleView.style.display = 'block';
+            if (subMergeGroupedView) subMergeGroupedView.style.display = 'none';
+        });
+
+        btnSubMergeGrouped.addEventListener('click', () => {
+            btnSubMergeGrouped.classList.add('active');
+            btnSubMergeSingle.classList.remove('active');
+            if (subMergeGroupedView) subMergeGroupedView.style.display = 'block';
+            if (subMergeSingleView) subMergeSingleView.style.display = 'none';
+        });
+    }
+
+    // ====================================================
+    // GROUP MERGE BY PREFIX (-) LOGIC (MYNTRA STYLE)
+    // ====================================================
+    const gmrgDropzone = document.getElementById('gmrgDropzone');
+    const gmrgFileInput = document.getElementById('gmrgFileInput');
+    const gmrgFileLabel = document.getElementById('gmrgFileLabel');
+    const btnResetGroupMerge = document.getElementById('btnResetGroupMerge');
+    const btnGroupMergeRun = document.getElementById('btnGroupMergeRun');
+    const gmrgProgress = document.getElementById('gmrgProgress');
+    const gmrgProgressText = document.getElementById('gmrgProgressText');
+    const gmrgProgressPercent = document.getElementById('gmrgProgressPercent');
+    const gmrgProgressFill = document.getElementById('gmrgProgressFill');
+
+    const gmrgGroupCount = document.getElementById('gmrgGroupCount');
+    const gmrgHeaderActions = document.getElementById('gmrgHeaderActions');
+    const gmrgEmptyState = document.getElementById('gmrgEmptyState');
+    const gmrgTableContainer = document.getElementById('gmrgTableContainer');
+    const gmrgPreviewTbody = document.getElementById('gmrgPreviewTbody');
+
+    const btnGmrgFullview = document.getElementById('btnGmrgFullview');
+    const btnGmrgMoveToFolder = document.getElementById('btnGmrgMoveToFolder');
+    const btnGmrgDownloadZip = document.getElementById('btnGmrgDownloadZip');
+
+    // Modals
+    const editGroupKeyModal = document.getElementById('editGroupKeyModal');
+    const editGroupKeyCurrent = document.getElementById('editGroupKeyCurrent');
+    const editGroupKeyInput = document.getElementById('editGroupKeyInput');
+    const btnCancelEditGroupKey = document.getElementById('btnCancelEditGroupKey');
+    const btnSaveEditGroupKey = document.getElementById('btnSaveEditGroupKey');
+
+    const gmrgFullViewModal = document.getElementById('gmrgFullViewModal');
+    const gmrgFullViewCount = document.getElementById('gmrgFullViewCount');
+    const btnCloseGmrgFullview = document.getElementById('btnCloseGmrgFullview');
+    const gmrgFullViewSearch = document.getElementById('gmrgFullViewSearch');
+    const tbodyGmrgFullView = document.getElementById('tbodyGmrgFullView');
+
+    let gmrgUploadedFiles = [];
+    let gmrgGroupsMap = new Map();
+    let gmrgUniqueGroups = [];
+    let gmrgNextId = 1;
+    let gmrgSingleFileBlob = null;
+    let gmrgSingleFileName = '';
+    let gmrgGeneratedZipBlob = null;
+    let gmrgGeneratedZipName = '';
+    let gmrgActiveEditGroupKey = null;
+
+    const groupColorPalette = [
+        { bg: '#eff6ff', border: '#bfdbfe', text: '#1d4ed8' },
+        { bg: '#ecfdf5', border: '#a7f3d0', text: '#047857' },
+        { bg: '#faf5ff', border: '#e9d5ff', text: '#7e22ce' },
+        { bg: '#fff7ed', border: '#fed7aa', text: '#c2410c' },
+        { bg: '#fdf2f8', border: '#fbcfe8', text: '#be185d' },
+        { bg: '#f0fdf4', border: '#bbf7d0', text: '#15803d' },
+        { bg: '#fefce8', border: '#fef08a', text: '#a16207' }
+    ];
+
+    function resetGmrgButtonState() {
+        gmrgGeneratedZipBlob = null;
+        gmrgGeneratedZipName = '';
+        gmrgSingleFileBlob = null;
+        gmrgSingleFileName = '';
+        if (btnGroupMergeRun) {
+            btnGroupMergeRun.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> Merge Files';
+            btnGroupMergeRun.style.background = '';
+            btnGroupMergeRun.style.borderColor = '';
+            btnGroupMergeRun.disabled = false;
+        }
+        if (btnGmrgDownloadZip) {
+            btnGmrgDownloadZip.innerHTML = '<i class="fa-solid fa-file-zipper"></i> Download Merged';
+            btnGmrgDownloadZip.disabled = false;
+        }
+    }
+
+    function recalculateGmrgGroups() {
+        gmrgGroupsMap = new Map();
+        gmrgUniqueGroups = [];
+
+        gmrgUploadedFiles.forEach(fileObj => {
+            const key = fileObj.groupKey || 'Other';
+            if (!gmrgGroupsMap.has(key)) {
+                gmrgGroupsMap.set(key, []);
+                gmrgUniqueGroups.push(key);
+            }
+            gmrgGroupsMap.get(key).push(fileObj);
+        });
+
+        gmrgUniqueGroups.sort();
+    }
+
+    async function extractSpreadsheetsFromZip(zipFile) {
+        const results = [];
+        try {
+            const zip = await JSZip.loadAsync(zipFile);
+            const entries = Object.keys(zip.files);
+            for (const relPath of entries) {
+                const entry = zip.files[relPath];
+                if (entry.dir) continue;
+                const fileName = relPath.split('/').pop();
+                if (fileName.startsWith('.') || fileName.startsWith('~') || fileName === 'Thumbs.db') continue;
+                const ext = fileName.split('.').pop().toLowerCase();
+                if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+                    const blob = await entry.async('blob');
+                    results.push({
+                        name: fileName,
+                        ext: ext,
+                        blob: new File([blob], fileName, { type: blob.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('Error reading ZIP file:', err);
+        }
+        return results;
+    }
+
+    async function handleGmrgFileSelection(files) {
+        resetGmrgButtonState();
+        if (!files || files.length === 0) return;
+
+        if (gmrgProgress) gmrgProgress.style.display = 'block';
+        const updateProgress = (percent, text) => {
+            if (gmrgProgressPercent) gmrgProgressPercent.textContent = `${Math.round(percent)}%`;
+            if (gmrgProgressFill) gmrgProgressFill.style.width = `${percent}%`;
+            if (gmrgProgressText && text) gmrgProgressText.textContent = text;
+        };
+
+        updateProgress(5, 'Reading uploaded files...');
+
+        try {
+            const flatFilesList = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const ext = file.name.split('.').pop().toLowerCase();
+
+                if (ext === 'zip') {
+                    updateProgress(10, `Unpacking ZIP: ${file.name}...`);
+                    const extracted = await extractSpreadsheetsFromZip(file);
+                    flatFilesList.push(...extracted);
+                } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+                    flatFilesList.push({
+                        name: file.name,
+                        ext: ext,
+                        blob: file
+                    });
+                }
+            }
+
+            if (flatFilesList.length === 0) {
+                if (gmrgProgress) gmrgProgress.style.display = 'none';
+                showCustomAlert('Invalid Files', 'No valid Excel (.xlsx, .xls) or CSV files found in selection.', 'error');
+                return;
+            }
+
+            for (let i = 0; i < flatFilesList.length; i++) {
+                const fileData = flatFilesList[i];
+                const pct = 10 + Math.round((i / flatFilesList.length) * 80);
+                updateProgress(pct, `Parsing: ${fileData.name}...`);
+                await new Promise(r => setTimeout(r, 10));
+
+                const baseName = fileData.name.substring(0, fileData.name.lastIndexOf('.')) || fileData.name;
+                const parts = baseName.split('-');
+                const groupKey = parts.length > 1 ? parts[0].trim() : baseName.trim();
+
+                const fileObj = {
+                    id: gmrgNextId++,
+                    name: fileData.name,
+                    fileObj: fileData.blob,
+                    ext: fileData.ext,
+                    groupKey: groupKey,
+                    aoa: []
+                };
+
+                fileObj.aoa = await readExcelAsAOA(fileData.blob);
+                gmrgUploadedFiles.push(fileObj);
+            }
+
+            updateProgress(95, 'Grouping files by prefix...');
+            await new Promise(r => setTimeout(r, 30));
+
+            recalculateGmrgGroups();
+            renderGmrgPreview();
+
+            updateProgress(100, 'Files Loaded!');
+            setTimeout(() => {
+                if (gmrgProgress) {
+                    gmrgProgress.style.display = 'none';
+                    if (gmrgProgressPercent) gmrgProgressPercent.textContent = '0%';
+                    if (gmrgProgressFill) gmrgProgressFill.style.width = '0%';
+                    if (gmrgProgressText) gmrgProgressText.textContent = 'Merging file groups...';
+                }
+            }, 800);
+
+            showCustomAlert('Files Loaded', `Successfully loaded ${gmrgUploadedFiles.length} files across ${gmrgUniqueGroups.length} prefix groups!`, 'success');
+
+        } catch (err) {
+            console.error('Error reading files:', err);
+            if (gmrgProgress) gmrgProgress.style.display = 'none';
+            showCustomAlert('Upload Error', 'Error reading files: ' + err.message, 'error');
+        }
+    }
+
+    function renderGmrgPreview() {
+        if (gmrgGroupCount) {
+            gmrgGroupCount.textContent = `${gmrgUniqueGroups.length} groups detected (${gmrgUploadedFiles.length} files)`;
+        }
+        if (gmrgFileLabel) {
+            gmrgFileLabel.textContent = gmrgUploadedFiles.length > 0 ? `${gmrgUploadedFiles.length} files loaded` : 'Drag & drop files here';
+        }
+
+        if (gmrgUniqueGroups.length === 0) {
+            if (gmrgEmptyState) gmrgEmptyState.style.display = 'block';
+            if (gmrgTableContainer) gmrgTableContainer.style.display = 'none';
+            if (btnGroupMergeRun) btnGroupMergeRun.style.display = 'none';
+            if (gmrgHeaderActions) gmrgHeaderActions.style.display = 'none';
+            if (gmrgPreviewTbody) gmrgPreviewTbody.innerHTML = '';
+            return;
+        }
+
+        if (gmrgEmptyState) gmrgEmptyState.style.display = 'none';
+        if (gmrgTableContainer) gmrgTableContainer.style.display = 'block';
+        if (btnGroupMergeRun) btnGroupMergeRun.style.display = 'flex';
+        if (gmrgHeaderActions) gmrgHeaderActions.style.display = 'flex';
+
+        if (!gmrgPreviewTbody) return;
+        gmrgPreviewTbody.innerHTML = '';
+
+        gmrgUniqueGroups.forEach((key, idx) => {
+            const filesInGroup = gmrgGroupsMap.get(key) || [];
+            const sourceNames = filesInGroup.map(f => f.name).join(', ');
+            const outputFilename = `${key}-DropShipOrderReports-FLIPKART-${key}.xlsx`;
+            const color = groupColorPalette[idx % groupColorPalette.length];
+
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #f1f5f9';
+            tr.style.background = idx % 2 === 0 ? '#ffffff' : '#fcfcfd';
+
+            tr.innerHTML = `
+                <td style="padding: 10px 12px; font-weight: 700; color: #64748b;">${idx + 1}</td>
+                <td style="padding: 10px 12px;">
+                    <span style="display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 700; font-size: 0.8rem; background: ${color.bg}; border: 1px solid ${color.border}; color: ${color.text}; font-family: monospace;">
+                        ${key}
+                    </span>
+                </td>
+                <td style="padding: 10px 12px;">
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <span style="font-weight: 700; color: #1e293b; font-size: 0.8rem;">
+                            <i class="fa-solid fa-copy" style="color: #6366f1; margin-right: 4px;"></i> ${filesInGroup.length} Source Files
+                        </span>
+                        <span style="font-size: 0.74rem; color: #64748b; max-width: 380px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${sourceNames}">
+                            ${sourceNames}
+                        </span>
+                    </div>
+                </td>
+                <td style="padding: 10px 12px;">
+                    <span style="color: #4f46e5; font-weight: 700; font-size: 0.82rem; font-family: monospace;">
+                        <i class="fa-solid fa-file-excel" style="color: #10b981; margin-right: 4px;"></i> ${outputFilename}
+                    </span>
+                </td>
+                <td style="padding: 10px 12px; text-align: center;">
+                    <div style="display: inline-flex; gap: 6px;">
+                        <button type="button" class="btn-inspect-gmrg" title="Inspect first 50 rows" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid #cbd5e1; background: #f8fafc; color: #4f46e5; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-eye" style="font-size: 0.78rem;"></i>
+                        </button>
+                        <button type="button" class="btn-edit-gmrg-key" title="Edit Group Key" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid #a7f3d0; background: #ecfdf5; color: #059669; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-pen" style="font-size: 0.78rem;"></i>
+                        </button>
+                        <button type="button" class="btn-del-gmrg-group" title="Delete Group" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid #fca5a5; background: #fee2e2; color: #dc2626; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-trash-can" style="font-size: 0.78rem;"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+
+            const btnInspect = tr.querySelector('.btn-inspect-gmrg');
+            if (btnInspect) {
+                btnInspect.addEventListener('click', () => {
+                    if (filesInGroup.length > 0) inspectGmrgSpreadsheet(filesInGroup[0]);
+                });
+            }
+
+            const btnEdit = tr.querySelector('.btn-edit-gmrg-key');
+            if (btnEdit) {
+                btnEdit.addEventListener('click', () => openEditGroupKeyModal(key));
+            }
+
+            const btnDel = tr.querySelector('.btn-del-gmrg-group');
+            if (btnDel) {
+                btnDel.addEventListener('click', () => {
+                    showCustomConfirm(
+                        'Delete Group',
+                        `Are you sure you want to remove group "${key}" (${filesInGroup.length} files)?`,
+                        (confirmed) => {
+                            if (confirmed) removeGmrgGroup(key);
+                        }
+                    );
+                });
+            }
+
+            gmrgPreviewTbody.appendChild(tr);
+        });
+    }
+
+    function removeGmrgGroup(groupKey) {
+        gmrgUploadedFiles = gmrgUploadedFiles.filter(f => f.groupKey !== groupKey);
+        recalculateGmrgGroups();
+        resetGmrgButtonState();
+        renderGmrgPreview();
+        if (gmrgFullViewModal && gmrgFullViewModal.style.display !== 'none') {
+            renderGmrgFullViewRows();
+        }
+        showCustomAlert('Group Removed', `Group "${groupKey}" has been removed.`, 'info');
+    }
+
+    function inspectGmrgSpreadsheet(file) {
+        if (!file) return;
+        const rows = file.aoa || [];
+        if (rows.length === 0) {
+            showCustomAlert('Notice', 'No data rows found in this file.', 'warning');
+            return;
+        }
+
+        if (excelPreviewModalTitle) excelPreviewModalTitle.textContent = file.name;
+        if (excelPreviewSheetName) excelPreviewSheetName.textContent = `Group: ${file.groupKey} • Displaying first ${Math.min(50, rows.length)} rows`;
+
+        if (excelPreviewThead) excelPreviewThead.innerHTML = '';
+        if (excelPreviewTbody) excelPreviewTbody.innerHTML = '';
+
+        if (rows.length > 0) {
+            const headerRow = rows[0];
+            const trHead = document.createElement('tr');
+            headerRow.forEach((col, cIdx) => {
+                const th = document.createElement('th');
+                th.textContent = col !== undefined && col !== null ? String(col) : `Col ${cIdx + 1}`;
+                trHead.appendChild(th);
+            });
+            if (excelPreviewThead) excelPreviewThead.appendChild(trHead);
+
+            for (let r = 1; r < Math.min(51, rows.length); r++) {
+                const tr = document.createElement('tr');
+                const row = rows[r];
+                for (let c = 0; c < headerRow.length; c++) {
+                    const td = document.createElement('td');
+                    const val = row[c];
+                    td.textContent = val !== undefined && val !== null ? String(val) : '';
+                    td.title = td.textContent;
+                    tr.appendChild(td);
+                }
+                if (excelPreviewTbody) excelPreviewTbody.appendChild(tr);
+            }
+        }
+
+        if (renameExcelPreviewModal) renameExcelPreviewModal.style.display = 'flex';
+    }
+
+    function openEditGroupKeyModal(groupKey) {
+        gmrgActiveEditGroupKey = groupKey;
+        if (editGroupKeyCurrent) editGroupKeyCurrent.textContent = groupKey;
+        if (editGroupKeyInput) {
+            editGroupKeyInput.value = groupKey;
+            setTimeout(() => editGroupKeyInput.focus(), 100);
+        }
+        if (editGroupKeyModal) editGroupKeyModal.style.display = 'flex';
+    }
+
+    function closeEditGroupKeyModal() {
+        if (editGroupKeyModal) editGroupKeyModal.style.display = 'none';
+        gmrgActiveEditGroupKey = null;
+    }
+
+    function saveEditGroupKey() {
+        if (!gmrgActiveEditGroupKey) return;
+        const newKey = editGroupKeyInput ? editGroupKeyInput.value.trim() : '';
+        if (!newKey) {
+            showCustomAlert('Error', 'Please enter a valid group key.', 'error');
+            return;
+        }
+
+        const oldKey = gmrgActiveEditGroupKey;
+        gmrgUploadedFiles.forEach(file => {
+            if (file.groupKey === oldKey) {
+                file.groupKey = newKey;
+                const baseName = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+                const ext = file.ext ? `.${file.ext}` : '';
+                const parts = baseName.split('-');
+                if (parts.length > 1) {
+                    parts[0] = newKey;
+                    file.name = parts.join('-') + ext;
+                }
+            }
+        });
+
+        recalculateGmrgGroups();
+        resetGmrgButtonState();
+        renderGmrgPreview();
+        if (gmrgFullViewModal && gmrgFullViewModal.style.display !== 'none') {
+            renderGmrgFullViewRows();
+        }
+        closeEditGroupKeyModal();
+        showCustomAlert('Group Key Updated', `Group renamed from "${oldKey}" to "${newKey}"!`, 'success');
+    }
+
+    if (btnCancelEditGroupKey) btnCancelEditGroupKey.addEventListener('click', closeEditGroupKeyModal);
+    if (btnSaveEditGroupKey) btnSaveEditGroupKey.addEventListener('click', saveEditGroupKey);
+    if (editGroupKeyInput) {
+        editGroupKeyInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                saveEditGroupKey();
+            }
+        });
+    }
+
+    // Full View Modal for Grouped Merge
+    function openGmrgFullViewModal() {
+        if (!gmrgFullViewModal) return;
+        if (gmrgFullViewSearch) gmrgFullViewSearch.value = '';
+        renderGmrgFullViewRows();
+        gmrgFullViewModal.style.display = 'flex';
+    }
+
+    function closeGmrgFullViewModal() {
+        if (gmrgFullViewModal) gmrgFullViewModal.style.display = 'none';
+    }
+
+    function renderGmrgFullViewRows() {
+        if (!tbodyGmrgFullView) return;
+        tbodyGmrgFullView.innerHTML = '';
+
+        const query = gmrgFullViewSearch ? gmrgFullViewSearch.value.trim().toLowerCase() : '';
+        let groups = [...gmrgUniqueGroups];
+
+        if (query) {
+            groups = groups.filter(key => {
+                if (key.toLowerCase().includes(query)) return true;
+                const files = gmrgGroupsMap.get(key) || [];
+                return files.some(f => f.name.toLowerCase().includes(query));
+            });
+        }
+
+        if (gmrgFullViewCount) {
+            gmrgFullViewCount.textContent = `${groups.length} groups (${gmrgUploadedFiles.length} files)`;
+        }
+
+        if (groups.length === 0) {
+            tbodyGmrgFullView.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 30px;">No matching groups found.</td></tr>';
+            return;
+        }
+
+        groups.forEach((key, idx) => {
+            const filesInGroup = gmrgGroupsMap.get(key) || [];
+            const sourceNames = filesInGroup.map(f => f.name).join(', ');
+            const outputFilename = `${key}-DropShipOrderReports-FLIPKART-${key}.xlsx`;
+            const color = groupColorPalette[idx % groupColorPalette.length];
+
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid #f1f5f9';
+            tr.style.background = idx % 2 === 0 ? '#ffffff' : '#fcfcfd';
+
+            tr.innerHTML = `
+                <td style="padding: 10px 12px; font-weight: 700; color: #64748b;">${idx + 1}</td>
+                <td style="padding: 10px 12px;">
+                    <span style="display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 700; font-size: 0.8rem; background: ${color.bg}; border: 1px solid ${color.border}; color: ${color.text}; font-family: monospace;">
+                        ${key}
+                    </span>
+                </td>
+                <td style="padding: 10px 12px;">
+                    <div style="display: flex; flex-direction: column; gap: 2px;">
+                        <span style="font-weight: 700; color: #1e293b; font-size: 0.8rem;">
+                            <i class="fa-solid fa-copy" style="color: #6366f1; margin-right: 4px;"></i> ${filesInGroup.length} Source Files
+                        </span>
+                        <span style="font-size: 0.74rem; color: #64748b; max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${sourceNames}">
+                            ${sourceNames}
+                        </span>
+                    </div>
+                </td>
+                <td style="padding: 10px 12px;">
+                    <span style="color: #4f46e5; font-weight: 700; font-size: 0.82rem; font-family: monospace;">
+                        <i class="fa-solid fa-file-excel" style="color: #10b981; margin-right: 4px;"></i> ${outputFilename}
+                    </span>
+                </td>
+                <td style="padding: 10px 12px; text-align: center;">
+                    <div style="display: inline-flex; gap: 6px;">
+                        <button type="button" class="btn-inspect-gmrg-fv" title="Inspect first 50 rows" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid #cbd5e1; background: #f8fafc; color: #4f46e5; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-eye" style="font-size: 0.78rem;"></i>
+                        </button>
+                        <button type="button" class="btn-edit-gmrg-key-fv" title="Edit Group Key" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid #a7f3d0; background: #ecfdf5; color: #059669; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-pen" style="font-size: 0.78rem;"></i>
+                        </button>
+                        <button type="button" class="btn-del-gmrg-group-fv" title="Delete Group" style="width: 28px; height: 28px; border-radius: 7px; border: 1px solid #fca5a5; background: #fee2e2; color: #dc2626; cursor: pointer; display: flex; align-items: center; justify-content: center;">
+                            <i class="fa-solid fa-trash-can" style="font-size: 0.78rem;"></i>
+                        </button>
+                    </div>
+                </td>
+            `;
+
+            const btnInspect = tr.querySelector('.btn-inspect-gmrg-fv');
+            if (btnInspect) {
+                btnInspect.addEventListener('click', () => {
+                    if (filesInGroup.length > 0) inspectGmrgSpreadsheet(filesInGroup[0]);
+                });
+            }
+
+            const btnEdit = tr.querySelector('.btn-edit-gmrg-key-fv');
+            if (btnEdit) {
+                btnEdit.addEventListener('click', () => openEditGroupKeyModal(key));
+            }
+
+            const btnDel = tr.querySelector('.btn-del-gmrg-group-fv');
+            if (btnDel) {
+                btnDel.addEventListener('click', () => {
+                    showCustomConfirm(
+                        'Delete Group',
+                        `Are you sure you want to remove group "${key}" (${filesInGroup.length} files)?`,
+                        (confirmed) => {
+                            if (confirmed) removeGmrgGroup(key);
+                        }
+                    );
+                });
+            }
+
+            tbodyGmrgFullView.appendChild(tr);
+        });
+    }
+
+    if (btnGmrgFullview) btnGmrgFullview.addEventListener('click', openGmrgFullViewModal);
+    if (btnCloseGmrgFullview) btnCloseGmrgFullview.addEventListener('click', closeGmrgFullViewModal);
+    if (gmrgFullViewSearch) gmrgFullViewSearch.addEventListener('input', renderGmrgFullViewRows);
+
+    // Merge Process & Download Execution
+    async function runGroupMergeProcess() {
+        if (gmrgUniqueGroups.length === 0) return;
+
+        // If files already generated, download directly
+        if (gmrgSingleFileBlob) {
+            const url = URL.createObjectURL(gmrgSingleFileBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = gmrgSingleFileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showCustomAlert('Download Complete', `${gmrgSingleFileName} downloaded successfully!`, 'success');
+            return;
+        } else if (gmrgGeneratedZipBlob) {
+            const url = URL.createObjectURL(gmrgGeneratedZipBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = gmrgGeneratedZipName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showCustomAlert('Download Complete', `${gmrgGeneratedZipName} downloaded successfully!`, 'success');
+            return;
+        }
+
+        if (btnGroupMergeRun) btnGroupMergeRun.disabled = true;
+        if (gmrgProgress) gmrgProgress.style.display = 'block';
+
+        const updateProgress = (percent, text) => {
+            if (gmrgProgressPercent) gmrgProgressPercent.textContent = `${Math.round(percent)}%`;
+            if (gmrgProgressFill) gmrgProgressFill.style.width = `${percent}%`;
+            if (gmrgProgressText && text) gmrgProgressText.textContent = text;
+        };
+
+        updateProgress(10, 'Merging file groups...');
+        await new Promise(r => setTimeout(r, 40));
+
+        try {
+            const zip = new JSZip();
+
+            for (let i = 0; i < gmrgUniqueGroups.length; i++) {
+                const key = gmrgUniqueGroups[i];
+                const filesInGroup = gmrgGroupsMap.get(key) || [];
+
+                const progressPct = 10 + Math.round((i / gmrgUniqueGroups.length) * 80);
+                updateProgress(progressPct, `Merging group: ${key} (${i + 1}/${gmrgUniqueGroups.length})...`);
+                await new Promise(r => setTimeout(r, 20));
+
+                const mergedRows = [];
+                let headerWritten = false;
+
+                for (let fIdx = 0; fIdx < filesInGroup.length; fIdx++) {
+                    const file = filesInGroup[fIdx];
+                    let aoa = file.aoa;
+                    if (!aoa || aoa.length === 0) {
+                        aoa = await readExcelAsAOA(file.fileObj);
+                    }
+                    if (!aoa || aoa.length === 0) continue;
+
+                    if (!headerWritten) {
+                        for (let r = 0; r < aoa.length; r++) {
+                            mergedRows.push([...aoa[r]]);
+                        }
+                        headerWritten = true;
+                    } else {
+                        if (aoa.length > 1) {
+                            for (let r = 1; r < aoa.length; r++) {
+                                mergedRows.push([...aoa[r]]);
+                            }
+                        }
+                    }
+                }
+
+                const ws = XLSX.utils.aoa_to_sheet(mergedRows);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+
+                const arrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const fileBlob = new Blob([arrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const outputName = `${key}-DropShipOrderReports-FLIPKART-${key}.xlsx`;
+
+                if (gmrgUniqueGroups.length === 1) {
+                    gmrgSingleFileBlob = fileBlob;
+                    gmrgSingleFileName = outputName;
+                } else {
+                    zip.file(outputName, fileBlob);
+                }
+            }
+
+            updateProgress(95, 'Generating output package...');
+            await new Promise(r => setTimeout(r, 40));
+
+            const isSingle = (gmrgUniqueGroups.length === 1);
+            if (!isSingle) {
+                gmrgGeneratedZipBlob = await zip.generateAsync({ type: 'blob' });
+                gmrgGeneratedZipName = 'flipkart_grouped_merged.zip';
+            }
+
+            updateProgress(100, 'Merging complete!');
+
+            setTimeout(() => {
+                if (gmrgProgress) {
+                    gmrgProgress.style.display = 'none';
+                    if (gmrgProgressPercent) gmrgProgressPercent.textContent = '0%';
+                    if (gmrgProgressFill) gmrgProgressFill.style.width = '0%';
+                }
+
+                if (btnGroupMergeRun) {
+                    btnGroupMergeRun.disabled = false;
+                    btnGroupMergeRun.innerHTML = isSingle ? '<i class="fa-solid fa-file-arrow-down"></i> Download Merged Excel' : '<i class="fa-solid fa-file-zipper"></i> Download Merged ZIP';
+                    btnGroupMergeRun.style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                    btnGroupMergeRun.style.borderColor = '#059669';
+                }
+
+                if (btnGmrgDownloadZip) {
+                    btnGmrgDownloadZip.innerHTML = isSingle ? '<i class="fa-solid fa-file-arrow-down"></i> Download Merged' : '<i class="fa-solid fa-file-zipper"></i> Download ZIP';
+                }
+            }, 800);
+
+            // Automatically trigger download on complete
+            if (isSingle && gmrgSingleFileBlob) {
+                const url = URL.createObjectURL(gmrgSingleFileBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = gmrgSingleFileName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            } else if (gmrgGeneratedZipBlob) {
+                const url = URL.createObjectURL(gmrgGeneratedZipBlob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = gmrgGeneratedZipName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
+
+            showCustomAlert('Merge Complete', `All ${gmrgUniqueGroups.length} groups merged successfully!`, 'success');
+
+        } catch (err) {
+            console.error('Error during group merge:', err);
+            if (gmrgProgress) gmrgProgress.style.display = 'none';
+            if (btnGroupMergeRun) btnGroupMergeRun.disabled = false;
+            showCustomAlert('Merge Failed', 'Error merging files: ' + err.message, 'error');
+        }
+    }
+
+    if (btnGroupMergeRun) btnGroupMergeRun.addEventListener('click', runGroupMergeProcess);
+    if (btnGmrgDownloadZip) btnGmrgDownloadZip.addEventListener('click', runGroupMergeProcess);
+
+    // Transfer Group Merged Files directly to Tab 4: Create Folder
+    async function moveToFolderCreateFromGroupMerge() {
+        if (gmrgUniqueGroups.length === 0) {
+            showCustomAlert('Notice', 'No groups available to move.', 'warning');
+            return;
+        }
+
+        if (gmrgProgress) gmrgProgress.style.display = 'block';
+        const updateProgress = (pct, txt) => {
+            if (gmrgProgressPercent) gmrgProgressPercent.textContent = `${Math.round(pct)}%`;
+            if (gmrgProgressFill) gmrgProgressFill.style.width = `${pct}%`;
+            if (gmrgProgressText && txt) gmrgProgressText.textContent = txt;
+        };
+
+        updateProgress(15, 'Preparing merged Excel files for Create Folder...');
+        await new Promise(r => setTimeout(r, 40));
+
+        try {
+            const mergedFilesForFolder = [];
+
+            for (let i = 0; i < gmrgUniqueGroups.length; i++) {
+                const key = gmrgUniqueGroups[i];
+                const filesInGroup = gmrgGroupsMap.get(key) || [];
+
+                const progressPct = 15 + Math.round((i / gmrgUniqueGroups.length) * 75);
+                updateProgress(progressPct, `Processing group: ${key}...`);
+                await new Promise(r => setTimeout(r, 10));
+
+                const mergedRows = [];
+                let headerWritten = false;
+
+                for (let fIdx = 0; fIdx < filesInGroup.length; fIdx++) {
+                    const file = filesInGroup[fIdx];
+                    let aoa = file.aoa;
+                    if (!aoa || aoa.length === 0) {
+                        aoa = await readExcelAsAOA(file.fileObj);
+                    }
+                    if (!aoa || aoa.length === 0) continue;
+
+                    if (!headerWritten) {
+                        for (let r = 0; r < aoa.length; r++) {
+                            mergedRows.push([...aoa[r]]);
+                        }
+                        headerWritten = true;
+                    } else {
+                        if (aoa.length > 1) {
+                            for (let r = 1; r < aoa.length; r++) {
+                                mergedRows.push([...aoa[r]]);
+                            }
+                        }
+                    }
+                }
+
+                const ws = XLSX.utils.aoa_to_sheet(mergedRows);
+                const wb = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+
+                const arrayBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const outputName = `${key}-DropShipOrderReports-FLIPKART-${key}.xlsx`;
+                const fileObj = new File([arrayBuffer], outputName, {
+                    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    lastModified: Date.now()
+                });
+                fileObj.customRelativePath = outputName;
+                fileObj.id = 'fc_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+
+                mergedFilesForFolder.push(fileObj);
+            }
+
+            updateProgress(100, 'Done!');
+            setTimeout(() => {
+                if (gmrgProgress) gmrgProgress.style.display = 'none';
+            }, 800);
+
+            // Switch Create Folder mode to 'files' if needed
+            const modeFilesBtn = document.getElementById('fcModeFilesBtn') || document.getElementById('folderModeFilesBtn');
+            if (folderMode !== 'files' && modeFilesBtn) {
+                modeFilesBtn.click();
+            }
+
+            // Transfer files to Create Folder
+            mergedFilesForFolder.forEach(mf => {
+                const exists = selectedFolderFiles.some(f => f.name === mf.name && f.size === mf.size);
+                if (!exists) {
+                    selectedFolderFiles.unshift(mf);
+                }
+            });
+            fcFiles = selectedFolderFiles;
+
+            updateFolderFilesListUI();
+
+            if (tabFolderBtn) {
+                tabFolderBtn.click();
+            }
+
+            showCustomAlert('Moved to Create Folder', `${mergedFilesForFolder.length} grouped merged files transferred to Create Folder tab!`, 'success');
+
+        } catch (err) {
+            console.error('Error moving to Create Folder:', err);
+            if (gmrgProgress) gmrgProgress.style.display = 'none';
+            showCustomAlert('Error', 'Failed to move files to Create Folder: ' + err.message, 'error');
+        }
+    }
+
+    if (btnGmrgMoveToFolder) btnGmrgMoveToFolder.addEventListener('click', moveToFolderCreateFromGroupMerge);
+
+    // Reset Group Merge
+    function resetGroupMerge() {
+        gmrgUploadedFiles = [];
+        gmrgGroupsMap.clear();
+        gmrgUniqueGroups = [];
+        gmrgNextId = 1;
+        resetGmrgButtonState();
+        if (gmrgFileInput) gmrgFileInput.value = '';
+        renderGmrgPreview();
+        showCustomAlert('Reset Complete', 'Group Merge queue has been cleared.', 'info');
+    }
+
+    if (btnResetGroupMerge) btnResetGroupMerge.addEventListener('click', resetGroupMerge);
+
+    // Dropzone Events for Group Merge
+    if (gmrgDropzone && gmrgFileInput) {
+        gmrgDropzone.addEventListener('click', () => gmrgFileInput.click());
+        gmrgFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                handleGmrgFileSelection(e.target.files);
+            }
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            gmrgDropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                gmrgDropzone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            gmrgDropzone.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                gmrgDropzone.classList.remove('dragover');
+            });
+        });
+
+        gmrgDropzone.addEventListener('drop', (e) => {
+            if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                handleGmrgFileSelection(e.dataTransfer.files);
+            }
+        });
+    }
+
     // TAB 2: RENAME EXCEL FILES LOGIC (UNIFIED)
     // ====================================================
     const renameDropzone = document.getElementById('renameDropzone');
@@ -1494,14 +2378,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Move Renamed Files to Create Folder
-    async function moveRenamedFilesToCreateFolder() {
+    // Move Renamed Files to Merge Tab (Group Merge)
+    async function moveRenamedFilesToMerge() {
         if (!currentRenameZipInstance && !currentRenameZipBlob) {
             alert('No renamed files available. Please run the rename process first.');
             return;
         }
 
-        showLoader('Moving renamed files to Create Folder...');
+        showLoader('Moving renamed files to Group Merge...');
         try {
             let zip = currentRenameZipInstance;
             if (!zip && currentRenameZipBlob) {
@@ -1528,50 +2412,39 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            const modeFilesBtn1 = document.getElementById('fcModeFilesBtn') || document.getElementById('folderModeFilesBtn');
-            if (folderMode !== 'files' && modeFilesBtn1) {
-                modeFilesBtn1.click();
+            if (renameFullViewModal) renameFullViewModal.style.display = 'none';
+
+            // Pass directly to Group Merge handler
+            await handleGmrgFileSelection(filesToMove);
+
+            // Ensure Group Merge sub-tab is active
+            if (btnSubMergeGrouped) {
+                btnSubMergeGrouped.click();
             }
 
-            filesToMove.forEach(newFile => {
-                const existingIdx = selectedFolderFiles.findIndex(f => f.name === newFile.name);
-                if (existingIdx !== -1) {
-                    selectedFolderFiles[existingIdx] = newFile;
-                } else {
-                    selectedFolderFiles.push(newFile);
-                }
-            });
-            fcFiles = selectedFolderFiles;
-
-            updateFolderFilesListUI();
+            // Switch main tab to Merge & Clean Orders
+            if (tabMergeBtn) {
+                tabMergeBtn.click();
+            }
 
             hideLoader();
 
-            if (renameFullViewModal) renameFullViewModal.style.display = 'none';
-
-            if (tabFolderBtn) {
-                tabFolderBtn.click();
-            }
-
             setTimeout(() => {
-                const targetEl = document.getElementById('fcSelectedFilesCard') || document.getElementById('fcDropzone');
+                const targetEl = document.getElementById('gmrgTableContainer') || document.getElementById('gmrgDropzone');
                 if (targetEl && targetEl.style.display !== 'none') {
                     targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                } else {
-                    const dropzone = document.getElementById('fcDropzone');
-                    if (dropzone) dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             }, 150);
 
             showCustomAlert(
-                'Moved to Create Folder',
-                `${filesToMove.length} renamed file(s) have been successfully added to Create Folder!`,
+                'Moved to Merge',
+                `${filesToMove.length} renamed file(s) have been successfully transferred to Group Merge!`,
                 'success'
             );
 
         } catch (err) {
             hideLoader();
-            console.error('Error moving renamed files to Create Folder:', err);
+            console.error('Error moving renamed files to Merge:', err);
             alert('Failed to move files: ' + err.message);
         }
     }
@@ -1645,8 +2518,8 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    if (renameMoveToFolderBtn) renameMoveToFolderBtn.addEventListener('click', moveRenamedFilesToCreateFolder);
-    if (fullViewMoveToFolderBtn) fullViewMoveToFolderBtn.addEventListener('click', moveRenamedFilesToCreateFolder);
+    if (renameMoveToFolderBtn) renameMoveToFolderBtn.addEventListener('click', moveRenamedFilesToMerge);
+    if (fullViewMoveToFolderBtn) fullViewMoveToFolderBtn.addEventListener('click', moveRenamedFilesToMerge);
     if (renameDownloadBtn) renameDownloadBtn.addEventListener('click', triggerRenamedDownload);
     if (fullViewDownloadBtn) fullViewDownloadBtn.addEventListener('click', triggerRenamedDownload);
 
@@ -1762,6 +2635,77 @@ document.addEventListener('DOMContentLoaded', () => {
                 req.onerror = () => resolve(false);
             });
         } catch (e) {}
+    }
+
+    // ----------------------------------------------------
+    // CLEAN RESET FUNCTIONS FOR TAB 3: SEPARATE FILE
+    // ----------------------------------------------------
+    async function resetSplitOption(opt, askConfirm = true) {
+        if (askConfirm) {
+            const hasData = selectedSplitFiles[opt] !== null || 
+                            (splitSessions[opt] && splitSessions[opt].logs && splitSessions[opt].logs.length > 0);
+            if (hasData) {
+                const optName = (SPLIT_OPTIONS[opt] && SPLIT_OPTIONS[opt].title) ? SPLIT_OPTIONS[opt].title : `Option ${opt}`;
+                const confirmed = window.confirm(`Are you sure you want to reset ${optName}? All uploaded files and split results for this option will be cleared.`);
+                if (!confirmed) return;
+            }
+        }
+
+        // 1. Clear in-memory selection
+        selectedSplitFiles[opt] = null;
+
+        // 2. Clear HTML inputs & UI info
+        const fileInput = document.getElementById(`splitFileInput${opt}`);
+        if (fileInput) fileInput.value = '';
+        const fileInfo = document.getElementById(`splitFileInfo${opt}`);
+        if (fileInfo) fileInfo.style.display = 'none';
+        const fileName = document.getElementById(`splitFileName${opt}`);
+        if (fileName) fileName.textContent = '';
+        const fileSize = document.getElementById(`splitFileSize${opt}`);
+        if (fileSize) fileSize.textContent = '';
+
+        // 3. Clear session & IndexedDB
+        await clearSplitSession(opt);
+
+        // 4. Reset result UI
+        const resultCard = document.getElementById(`splitResult${opt}`);
+        if (resultCard) resultCard.style.display = 'none';
+        const successMsg = document.getElementById(`splitSuccessMsg${opt}`);
+        if (successMsg) successMsg.textContent = 'Generated 0 files.';
+        const timerBadge = document.getElementById(`splitTimer${opt}`);
+        if (timerBadge) timerBadge.innerHTML = `<i class="fa-regular fa-clock"></i> 60 min remaining`;
+
+        // 5. If modal is currently viewing this option, close modal
+        if (splitFullViewModal && splitFullViewModal.style.display !== 'none' && currentSplitOption === opt) {
+            splitFullViewModal.style.display = 'none';
+        }
+
+        if (askConfirm) {
+            const optName = (SPLIT_OPTIONS[opt] && SPLIT_OPTIONS[opt].title) ? SPLIT_OPTIONS[opt].title : `Option ${opt}`;
+            showCustomAlert('Reset Completed', `${optName} has been cleanly reset.`, 'success');
+        }
+    }
+
+    async function resetSplitAll(askConfirm = true) {
+        const hasAnyData = ['1', '2', '3', '4'].some(opt => {
+            return selectedSplitFiles[opt] !== null || 
+                   (splitSessions[opt] && splitSessions[opt].logs && splitSessions[opt].logs.length > 0);
+        });
+
+        if (askConfirm && hasAnyData) {
+            const confirmed = window.confirm("Are you sure you want to reset ALL 4 Separate File options? All uploaded files, generated split results, and sessions will be cleared.");
+            if (!confirmed) return;
+        }
+
+        for (const opt of ['1', '2', '3', '4']) {
+            await resetSplitOption(opt, false);
+        }
+
+        if (splitFullViewModal) {
+            splitFullViewModal.style.display = 'none';
+        }
+
+        showCustomAlert('Reset Completed', 'All 4 Separate File options have been cleanly reset.', 'success');
     }
 
     // Initialize each of the 4 option cards
@@ -1952,6 +2896,23 @@ document.addEventListener('DOMContentLoaded', () => {
         if (moveToFolderBtn) {
             moveToFolderBtn.addEventListener('click', moveSplitFilesToCreateFolder);
         }
+
+        // Header Reset Button for Option
+        const cardResetBtn = document.getElementById(`splitCardResetBtn${opt}`);
+        if (cardResetBtn) {
+            cardResetBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                resetSplitOption(opt, true);
+            });
+        }
+
+        // Result Bar Reset Button for Option
+        const resultResetBtn = document.getElementById(`splitResultResetBtn${opt}`);
+        if (resultResetBtn) {
+            resultResetBtn.addEventListener('click', () => {
+                resetSplitOption(opt, true);
+            });
+        }
     });
 
     // Bulk Process All Uploaded Files Button (Master Button)
@@ -1982,6 +2943,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     masterBtn.innerHTML = originalHTML;
                 }, 1500);
             }
+        });
+    }
+
+    const splitMasterResetBtn = document.getElementById('splitMasterResetBtn');
+    if (splitMasterResetBtn) {
+        splitMasterResetBtn.addEventListener('click', () => {
+            resetSplitAll(true);
         });
     }
 
@@ -2497,6 +3465,13 @@ document.addEventListener('DOMContentLoaded', () => {
         splitFullViewMoveToFolderBtn.addEventListener('click', moveSplitFilesToCreateFolder);
     }
 
+    const modalSplitResetBtn = document.getElementById('modalSplitResetBtn');
+    if (modalSplitResetBtn) {
+        modalSplitResetBtn.addEventListener('click', () => {
+            resetSplitOption(currentSplitOption, true);
+        });
+    }
+
     // ====================================================
     // TAB 4: ADVANCED FOLDER CREATE (STRICT 3-FILE RULE)
     // ====================================================
@@ -2641,6 +3616,82 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Switch between Group Files and Process Folders
+    function getFcExpectedCount() {
+        const toggle = document.getElementById('toggleFcRule');
+        if (!toggle) return 2;
+        return toggle.checked ? 2 : 3;
+    }
+
+    function updateFcRuleUI() {
+        const toggle = document.getElementById('toggleFcRule');
+        const isNew = toggle ? toggle.checked : false;
+        const ruleSlider = document.getElementById('fcRuleSlider');
+        const ruleKnob = document.getElementById('fcRuleKnob');
+        const ruleText = document.getElementById('fcRuleText');
+        const ruleTag = document.getElementById('fcRuleTag');
+        const uploadTitle = document.getElementById('fcUploadTitle');
+        const ruleBoxContainer = document.getElementById('fcRuleBoxContainer');
+        const ruleBoxTitle = document.getElementById('fcRuleBoxTitle');
+        const ruleBoxDesc = document.getElementById('fcRuleBoxDesc');
+        const expected = isNew ? 2 : 3;
+
+        if (isNew) {
+            if (ruleSlider) ruleSlider.style.backgroundColor = '#6366f1';
+            if (ruleKnob) ruleKnob.style.transform = 'translateX(18px)';
+            if (ruleText) {
+                ruleText.textContent = 'New (2 Files)';
+                ruleText.style.color = '#4f46e5';
+            }
+            if (ruleTag) {
+                ruleTag.textContent = 'New: 2 Files / Folder';
+                ruleTag.style.background = '#ede9fe';
+                ruleTag.style.color = '#6d28d9';
+                ruleTag.style.borderColor = '#ddd6fe';
+            }
+            if (ruleBoxContainer) {
+                ruleBoxContainer.style.background = '#f5f3ff';
+                ruleBoxContainer.style.borderLeft = '4px solid #7c3aed';
+            }
+            if (ruleBoxTitle) {
+                ruleBoxTitle.style.color = '#6d28d9';
+                ruleBoxTitle.innerHTML = '<i class="fa-solid fa-circle-check"></i> Mandatory 2-File Rule:';
+            }
+            if (ruleBoxDesc) {
+                ruleBoxDesc.style.color = '#5b21b6';
+                ruleBoxDesc.innerHTML = 'Every folder <b>must have exactly 2 files</b>! Any folder with less than 2 files will trigger an <b>ERROR</b> and generate a Missing Files Report.';
+            }
+        } else {
+            if (ruleSlider) ruleSlider.style.backgroundColor = '#94a3b8';
+            if (ruleKnob) ruleKnob.style.transform = 'translateX(0px)';
+            if (ruleText) {
+                ruleText.textContent = 'Old (3 Files)';
+                ruleText.style.color = '#475569';
+            }
+            if (ruleTag) {
+                ruleTag.textContent = 'Old: 3 Files / Folder';
+                ruleTag.style.background = '#fee2e2';
+                ruleTag.style.color = '#b91c1c';
+                ruleTag.style.borderColor = '#fca5a5';
+            }
+            if (ruleBoxContainer) {
+                ruleBoxContainer.style.background = '#fee2e2';
+                ruleBoxContainer.style.borderLeft = '4px solid #dc2626';
+            }
+            if (ruleBoxTitle) {
+                ruleBoxTitle.style.color = '#b91c1c';
+                ruleBoxTitle.innerHTML = '<i class="fa-solid fa-triangle-exclamation"></i> Mandatory 3-File Rule:';
+            }
+            if (ruleBoxDesc) {
+                ruleBoxDesc.style.color = '#991b1b';
+                ruleBoxDesc.innerHTML = 'Every folder <b>must have exactly 3 files</b>! Any folder with less than 3 files will trigger an <b>ERROR</b> and generate a Missing Files Report.';
+            }
+        }
+
+        if (uploadTitle) {
+            uploadTitle.textContent = fcMode === 'files' ? `Select Files to Group (${expected} Files Rule)` : `Upload Folders Directly (${expected} Files Rule)`;
+        }
+    }
+
     function switchFcMode(mode) {
         if (fcMode === mode) return;
         fcMode = mode;
@@ -2650,17 +3701,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fcFileInput) fcFileInput.value = '';
         if (fcFolderInput) fcFolderInput.value = '';
 
+        const expCount = getFcExpectedCount();
         if (mode === 'files') {
             if (fcModeFilesBtn) fcModeFilesBtn.classList.add('active');
             if (fcModeFoldersBtn) fcModeFoldersBtn.classList.remove('active');
-            if (fcUploadTitle) fcUploadTitle.textContent = "Select Files to Group (3 Files Rule)";
+            if (fcUploadTitle) fcUploadTitle.textContent = `Select Files to Group (${expCount} Files Rule)`;
             if (fcUploadDesc) fcUploadDesc.textContent = "Drag & drop all files (including Merged file & prefix sheets) together.";
             if (fcFileDisplay) fcFileDisplay.innerHTML = 'Drag & drop files here or <span class="browse-link">Browse Files</span>';
         } else {
             if (fcModeFilesBtn) fcModeFilesBtn.classList.remove('active');
             if (fcModeFoldersBtn) fcModeFoldersBtn.classList.add('active');
-            if (fcUploadTitle) fcUploadTitle.textContent = "Upload Folders Directly (3 Files Rule)";
-            if (fcUploadDesc) fcUploadDesc.textContent = "Drag & drop whole folders here to verify 3 files per folder and package.";
+            if (fcUploadTitle) fcUploadTitle.textContent = `Upload Folders Directly (${expCount} Files Rule)`;
+            if (fcUploadDesc) fcUploadDesc.textContent = `Drag & drop whole folders here to verify ${expCount} files per folder and package.`;
             if (fcFileDisplay) fcFileDisplay.innerHTML = 'Drag & drop folders here or <span class="browse-link">Browse Folders</span>';
         }
         updateFcUploadedFileListUI();
@@ -2669,6 +3721,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (fcModeFilesBtn) fcModeFilesBtn.addEventListener('click', () => switchFcMode('files'));
     if (fcModeFoldersBtn) fcModeFoldersBtn.addEventListener('click', () => switchFcMode('folders'));
+
+    const toggleFcRule = document.getElementById('toggleFcRule');
+    if (toggleFcRule) {
+        toggleFcRule.checked = true; // Default ON: New 2-File Rule
+        toggleFcRule.addEventListener('change', async () => {
+            updateFcRuleUI();
+            if (fcFolderGroups && fcFolderGroups.length > 0) {
+                const exp = getFcExpectedCount();
+                fcFolderGroups.forEach(grp => {
+                    grp.isError = (grp.files.length !== exp);
+                });
+                sortFolderGroups(fcFolderGroups);
+                await rebuildFcPackage(true);
+                renderFcDashboardUI();
+                renderFcAccordion();
+                appendFcLog(`Switched rule to: ${exp} Files per folder. Folders re-validated.`, 'info');
+            }
+        });
+        updateFcRuleUI();
+    }
 
     // Dropzone listeners
     if (fcDropzone) {
@@ -2814,14 +3886,86 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fcBtn) fcBtn.disabled = false;
     }
 
+    // Complete Clean Reset for Create Folder
+    async function resetFolderCreateAll(askConfirm = true) {
+        if (askConfirm && (fcFiles.length > 0 || fcFolderGroups.length > 0)) {
+            if (!confirm("Are you sure you want to clean reset all files and folders in Create Folder?")) {
+                return;
+            }
+        }
+
+        // 1. Clear file arrays
+        fcFiles = [];
+        selectedFolderFiles = [];
+        fcFolderGroups = [];
+        if (fcOpenFolderPrefixes) fcOpenFolderPrefixes.clear();
+
+        // 2. Clear blobs and filenames
+        fcZipBlob = null;
+        fcZipFilename = "";
+        fcMissingReportBlob = null;
+
+        // 3. Reset file inputs
+        if (fcFileInput) fcFileInput.value = '';
+        if (fcFolderInput) fcFolderInput.value = '';
+        const hiddenUpload = document.getElementById('fcFolderUploadInput');
+        if (hiddenUpload) hiddenUpload.value = '';
+
+        // 4. Update UI - Selected files list
+        if (fcSelectedCount) fcSelectedCount.textContent = '0';
+        if (fcUploadedFileList) fcUploadedFileList.innerHTML = '';
+        if (fcSelectedFilesCard) fcSelectedFilesCard.style.display = 'none';
+        if (fcBtn) {
+            fcBtn.disabled = true;
+            fcBtn.innerHTML = '<i class="fa-solid fa-bolt"></i> START FOLDER CREATE';
+        }
+
+        // 5. Hide output dashboard and progress card
+        if (fcOutputContainer) {
+            fcOutputContainer.innerHTML = '';
+            fcOutputContainer.style.display = 'none';
+        }
+        if (fcProgressCard) {
+            fcProgressCard.style.display = 'none';
+        }
+
+        // 6. Stop countdown timer and clear IndexedDB session
+        if (fcCountdownInterval) clearInterval(fcCountdownInterval);
+        await clearFolderCreateSession();
+
+        // 7. Reset Folder Manager modal if open
+        closeFcFullscreenModal();
+        if (modalFcAccordionContainer) {
+            modalFcAccordionContainer.innerHTML = `
+                <div style="text-align: center; padding: 3rem 1rem; color: #94a3b8;">
+                    <i class="fa-solid fa-folder-open" style="font-size: 2.5rem; color: #cbd5e1; margin-bottom: 0.75rem;"></i>
+                    <p style="font-weight: 500;">No folders loaded.</p>
+                </div>
+            `;
+        }
+
+        // 8. Log message & notification
+        appendFcLog('Clean Reset: All files, folders, and created packages have been cleared.', 'info');
+        showCustomAlert('Reset Complete', 'Create Folder data and session have been cleared successfully.', 'info');
+    }
+
     if (clearFcFilesBtn) {
         clearFcFilesBtn.addEventListener('click', () => {
-            fcFiles = [];
-            selectedFolderFiles = fcFiles;
-            updateFcUploadedFileListUI();
-            if (fcFileInput) fcFileInput.value = '';
-            if (fcFolderInput) fcFolderInput.value = '';
-            appendFcLog('Cleared all selected files.');
+            resetFolderCreateAll(false);
+        });
+    }
+
+    const fcResetTopBtn = document.getElementById('fcResetTopBtn');
+    if (fcResetTopBtn) {
+        fcResetTopBtn.addEventListener('click', () => {
+            resetFolderCreateAll(true);
+        });
+    }
+
+    const modalFcResetBtn = document.getElementById('modalFcResetBtn');
+    if (modalFcResetBtn) {
+        modalFcResetBtn.addEventListener('click', () => {
+            resetFolderCreateAll(true);
         });
     }
 
@@ -2854,7 +3998,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 fcProgressPercent.textContent = '10%';
                 fcProgressStepText.textContent = 'Analyzing and grouping files...';
             }
-            appendFcLog('Starting Folder Create process with Strict 3-File Rule...');
+            appendFcLog(`Starting Folder Create process with Strict ${getFcExpectedCount()}-File Rule...`);
 
             try {
                 // Grouping
@@ -2934,16 +4078,17 @@ document.addEventListener('DOMContentLoaded', () => {
                     });
                 }
 
+                const expCount = getFcExpectedCount();
                 if (fcProgressBar) {
                     fcProgressBar.style.width = '45%';
                     fcProgressPercent.textContent = '45%';
-                    fcProgressStepText.textContent = 'Validating 3 files per folder...';
+                    fcProgressStepText.textContent = `Validating ${expCount} files per folder...`;
                 }
 
-                // Strict 3-File validation
+                // Dynamic File validation (2 or 3 files)
                 fcFolderGroups = Object.values(groupsMap);
                 fcFolderGroups.forEach(grp => {
-                    grp.isError = (grp.files.length !== 3);
+                    grp.isError = (grp.files.length !== expCount);
                 });
 
                 // Sort incomplete folders to top
@@ -2979,18 +4124,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 const incompleteCount = fcFolderGroups.filter(f => f.isError).length;
                 const readyCount = totalFolders - incompleteCount;
 
-                appendFcLog(`Folder Create completed. Total: ${totalFolders}, Ready (3 Files): ${readyCount}, Errors (< 3 Files): ${incompleteCount}.`, incompleteCount > 0 ? 'warning' : 'success');
+                const expCountAfter = getFcExpectedCount();
+                appendFcLog(`Folder Create completed. Total: ${totalFolders}, Ready (${expCountAfter} Files): ${readyCount}, Errors (< ${expCountAfter} Files): ${incompleteCount}.`, incompleteCount > 0 ? 'warning' : 'success');
 
                 if (incompleteCount > 0) {
                     showCustomAlert(
                         'Folders Created with Incomplete Files',
-                        `${incompleteCount} folder(s) have fewer than 3 files and triggered an ERROR! They are displayed first in the Folder Manager.`,
+                        `${incompleteCount} folder(s) have fewer than ${expCountAfter} files and triggered an ERROR! They are displayed first in the Folder Manager.`,
                         'warning'
                     );
                 } else {
                     showCustomAlert(
                         'Folder Create Successful',
-                        `All ${totalFolders} folder(s) have exactly 3 files! Your package is ready.`,
+                        `All ${totalFolders} folder(s) have exactly ${expCountAfter} files! Your package is ready.`,
                         'success'
                     );
                 }
@@ -3018,9 +4164,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const foldersWithIssues = [];
         let hasMissing = false;
 
+        const expCount = getFcExpectedCount();
         fcFolderGroups.forEach(grp => {
-            // Strict 3-File rule: exactly 3 files required
-            grp.isError = (grp.files.length !== 3);
+            // Dynamic rule: exactly expCount files required
+            grp.isError = (grp.files.length !== expCount);
             if (grp.isError) {
                 foldersWithIssues.push(grp);
                 hasMissing = true;
@@ -3032,7 +4179,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
 
-        // Re-sort so error folders (< 3 files) appear first
+        // Re-sort so error folders (< expCount files) appear first
         sortFolderGroups(fcFolderGroups);
 
         if (hasMissing) {
@@ -3041,9 +4188,9 @@ document.addEventListener('DOMContentLoaded', () => {
             ];
             foldersWithIssues.forEach(item => {
                 const fileNamesStr = item.files.map(f => f.name).join(", ");
-                const statusStr = item.files.length < 3
-                    ? `File Missing (Found ${item.files.length}, Expected 3)`
-                    : `Extra Files Present (Found ${item.files.length}, Expected 3)`;
+                const statusStr = item.files.length < expCount
+                    ? `File Missing (Found ${item.files.length}, Expected ${expCount})`
+                    : `Extra Files Present (Found ${item.files.length}, Expected ${expCount})`;
                 reportData.push([
                     item.prefix,
                     item.files.length,
@@ -3109,7 +4256,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ${incompleteCount > 0 ? 'Folder Create Completed with Errors' : 'Folder Create Completed Successfully!'}
                             </h2>
                             <div style="font-size: 0.82rem; color: #64748b; margin-top: 2px;">
-                                ${incompleteCount > 0 ? `${incompleteCount} folder(s) have missing files (< 3 files). Fix them in Folder Manager.` : `All ${totalFolders} folder(s) have exactly 3 files! Ready for Invoice Arrange.`}
+                                ${incompleteCount > 0 ? `${incompleteCount} folder(s) have missing files (< ${getFcExpectedCount()} files). Fix them in Folder Manager.` : `All ${totalFolders} folder(s) have exactly ${getFcExpectedCount()} files! Ready for Invoice Arrange.`}
                             </div>
                         </div>
                     </div>
@@ -3125,7 +4272,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div style="font-size: 1.4rem; font-weight: 800; color: #1e293b;" id="fcTotalStat">${totalFolders}</div>
                     </div>
                     <div style="background: #ecfdf5; border: 1px solid #a7f3d0; padding: 12px; border-radius: 10px; text-align: center;">
-                        <div style="font-size: 0.75rem; color: #059669; font-weight: 600; text-transform: uppercase;">Ready (3 Files)</div>
+                        <div style="font-size: 0.75rem; color: #059669; font-weight: 600; text-transform: uppercase;">Ready (${getFcExpectedCount()} Files)</div>
                         <div style="font-size: 1.4rem; font-weight: 800; color: #059669;" id="fcReadyStat">${readyCount}</div>
                     </div>
                     <div style="background: #fee2e2; border: 1px solid #fca5a5; padding: 12px; border-radius: 10px; text-align: center;">
@@ -3147,6 +4294,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     </button>
                     <button type="button" class="btn btn-move-folder" id="fcMoveToInvoiceBtn" style="padding: 10px 18px; font-weight: 700; font-size: 0.9rem; border-radius: 8px; background: linear-gradient(135deg, #4f46e5, #4338ca); color: #fff; border: none; cursor: pointer;">
                         <i class="fa-solid fa-file-invoice"></i> Move to Invoice Arrange
+                    </button>
+                    <button type="button" class="btn btn-danger" id="fcResetDashboardBtn" style="padding: 10px 18px; font-weight: 700; font-size: 0.9rem; border-radius: 8px; background: #fee2e2; color: #dc2626; border: 1.5px solid #fca5a5; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-rotate-left"></i> Reset / Clear All
                     </button>
                 </div>
             </div>
@@ -3196,6 +4346,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const moveInvBtn = document.getElementById('fcMoveToInvoiceBtn');
         if (moveInvBtn) {
             moveInvBtn.addEventListener('click', moveToInvoiceArrangeFromFolderCreate);
+        }
+
+        const resetDashBtn = document.getElementById('fcResetDashboardBtn');
+        if (resetDashBtn) {
+            resetDashBtn.addEventListener('click', () => {
+                resetFolderCreateAll(true);
+            });
         }
     }
 
@@ -3259,6 +4416,107 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // Folder Upload State and Helpers
+    const fcOpenFolderPrefixes = new Set();
+    let fcUploadTargetPrefix = null;
+    let fcHiddenUploadInput = null;
+
+    function initFcHiddenUploadInput() {
+        if (!fcHiddenUploadInput) {
+            fcHiddenUploadInput = document.getElementById('fcFolderUploadInput');
+            if (!fcHiddenUploadInput) {
+                fcHiddenUploadInput = document.createElement('input');
+                fcHiddenUploadInput.id = 'fcFolderUploadInput';
+                fcHiddenUploadInput.type = 'file';
+                fcHiddenUploadInput.multiple = true;
+                fcHiddenUploadInput.accept = '.xlsx,.xls,.csv';
+                fcHiddenUploadInput.style.display = 'none';
+                document.body.appendChild(fcHiddenUploadInput);
+            }
+
+            fcHiddenUploadInput.addEventListener('change', async (e) => {
+                if (e.target.files && e.target.files.length > 0 && fcUploadTargetPrefix) {
+                    const targetPrefix = fcUploadTargetPrefix;
+                    const selectedFiles = Array.from(e.target.files);
+                    await handleFcUploadToFolder(targetPrefix, selectedFiles);
+                }
+                fcHiddenUploadInput.value = '';
+                fcUploadTargetPrefix = null;
+            });
+        }
+    }
+
+    function triggerFcUploadForFolder(prefix) {
+        initFcHiddenUploadInput();
+        fcUploadTargetPrefix = prefix;
+        fcHiddenUploadInput.value = '';
+        fcHiddenUploadInput.click();
+    }
+
+    async function handleFcUploadToFolder(prefix, selectedFiles) {
+        let grp = fcFolderGroups.find(g => g.prefix === prefix);
+        if (!grp) {
+            grp = {
+                prefix: prefix,
+                files: [],
+                isError: true
+            };
+            fcFolderGroups.push(grp);
+        }
+
+        const expCount = getFcExpectedCount();
+        let addedCount = 0;
+
+        for (const file of selectedFiles) {
+            let finalName = file.name;
+            if (!finalName.startsWith(`${prefix}-`) && !finalName.startsWith(`${prefix}_`)) {
+                finalName = `${prefix}-${file.name}`;
+            }
+
+            const existingIdx = grp.files.findIndex(f => f.name === finalName);
+            const fileObj = {
+                id: 'u_' + prefix + '_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+                name: finalName,
+                size: file.size,
+                blob: file,
+                file: file,
+                customRelativePath: `${prefix}/${finalName}`
+            };
+
+            if (existingIdx !== -1) {
+                grp.files[existingIdx] = fileObj;
+            } else {
+                grp.files.push(fileObj);
+            }
+
+            file.customRelativePath = `${prefix}/${finalName}`;
+            fcFiles.push(file);
+            addedCount++;
+        }
+
+        selectedFolderFiles = fcFiles;
+        grp.isError = (grp.files.length !== expCount);
+        fcOpenFolderPrefixes.add(prefix);
+
+        appendFcLog(`Uploaded ${addedCount} file(s) into folder [${prefix}]. Folder now has ${grp.files.length}/${expCount} files.`, 'success');
+
+        await rebuildFcPackage();
+
+        if (!grp.isError) {
+            showCustomAlert(
+                'Folder Completed! ✅',
+                `Folder [${prefix}] now has all ${expCount} files! Error removed successfully.`,
+                'success'
+            );
+        } else {
+            showCustomAlert(
+                'File Attached',
+                `Added ${addedCount} file(s) to folder [${prefix}] (${grp.files.length}/${expCount} files).`,
+                'info'
+            );
+        }
+    }
+
     // Render Folder Accordion inside Fullscreen Modal
     function renderFcAccordion(filter = 'all') {
         if (!modalFcAccordionContainer) return;
@@ -3270,8 +4528,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Update badges
         if (modalFcTotalBadge) modalFcTotalBadge.innerHTML = `<i class="fa-solid fa-folder"></i> Total: ${totalFolders} Folders`;
-        if (modalFcReadyBadge) modalFcReadyBadge.innerHTML = `<i class="fa-solid fa-circle-check"></i> Ready (3 Files): ${readyCount}`;
-        if (modalFcErrorBadge) modalFcErrorBadge.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Incomplete (< 3 Files): ${incompleteCount} (Shown First)`;
+        const expCount = getFcExpectedCount();
+        if (modalFcReadyBadge) modalFcReadyBadge.innerHTML = `<i class="fa-solid fa-circle-check"></i> Ready (${expCount} Files): ${readyCount}`;
+        if (modalFcErrorBadge) modalFcErrorBadge.innerHTML = `<i class="fa-solid fa-triangle-exclamation"></i> Incomplete (< ${expCount} Files): ${incompleteCount} (Shown First)`;
 
         if (modalFcDownloadReportBtn) {
             modalFcDownloadReportBtn.style.display = incompleteCount > 0 ? 'inline-flex' : 'none';
@@ -3279,7 +4538,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (filterAllBtn) filterAllBtn.innerText = `All Folders (${totalFolders})`;
         if (filterIncBtn) filterIncBtn.innerText = `⚠️ Errors / Incomplete (${incompleteCount})`;
-        if (filterRdyBtn) filterRdyBtn.innerText = `✅ Ready (3 Files) (${readyCount})`;
+        if (filterRdyBtn) filterRdyBtn.innerText = `✅ Ready (${getFcExpectedCount()} Files) (${readyCount})`;
 
         const query = (modalFcSearchInput ? modalFcSearchInput.value : '').trim().toLowerCase();
 
@@ -3311,17 +4570,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         filtered.forEach((grp) => {
             const card = document.createElement('div');
-            // Strict 3-File rule: Incomplete (< 3 files) open by default!
-            card.className = `fc-folder-card ${grp.isError ? 'error-card open' : 'success-card'}`;
+            // Keep folder open if error OR previously opened by user
+            const isOpen = grp.isError || fcOpenFolderPrefixes.has(grp.prefix);
+            card.className = `fc-folder-card ${grp.isError ? 'error-card' : 'success-card'} ${isOpen ? 'open' : ''}`;
 
-            const isOk = grp.files.length === 3;
+            const isOk = grp.files.length === expCount;
             const badgeColor = isOk ? '#059669' : '#dc2626';
             const badgeBg = isOk ? '#ecfdf5' : '#fee2e2';
             const badgeBorder = isOk ? '#a7f3d0' : '#fca5a5';
-            const missingDiff = 3 - grp.files.length;
+            const missingDiff = expCount - grp.files.length;
             const badgeText = isOk
-                ? `✅ 3 Files (Complete)`
-                : `⚠️ ${grp.files.length} / 3 Files (${missingDiff > 0 ? `Missing ${missingDiff}` : `Extra ${-missingDiff}`})`;
+                ? `✅ ${expCount} Files (Complete)`
+                : `⚠️ ${grp.files.length} / ${expCount} Files (${missingDiff > 0 ? `Missing ${missingDiff}` : `Extra ${-missingDiff}`})`;
 
             // Header
             const header = document.createElement('div');
@@ -3333,10 +4593,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                     <div>
                         <div class="fc-folder-name">Folder [${grp.prefix}]</div>
-                        <div style="font-size: 0.75rem; color: #64748b;">${grp.files.length} of 3 file(s) attached</div>
+                        <div style="font-size: 0.75rem; color: #64748b;">${grp.files.length} of ${expCount} file(s) attached</div>
                     </div>
                 </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                <div style="display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;">
+                    <button type="button" class="btn fc-header-upload-btn" title="Upload / Attach file directly into Folder [${grp.prefix}]" style="padding: 4px 11px; font-size: 0.76rem; font-weight: 700; border-radius: 6px; background: #059669; color: white; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; box-shadow: 0 1px 3px rgba(5,150,105,0.25);">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Upload File
+                    </button>
                     <span style="background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder}; font-size: 0.78rem; font-weight: 700; padding: 0.25rem 0.65rem; border-radius: 6px;">
                         ${badgeText}
                     </span>
@@ -3345,12 +4608,47 @@ document.addEventListener('DOMContentLoaded', () => {
             `;
             header.addEventListener('click', () => {
                 card.classList.toggle('open');
+                if (card.classList.contains('open')) {
+                    fcOpenFolderPrefixes.add(grp.prefix);
+                } else {
+                    fcOpenFolderPrefixes.delete(grp.prefix);
+                }
             });
+
+            // Header upload button click
+            const headerUploadBtn = header.querySelector('.fc-header-upload-btn');
+            if (headerUploadBtn) {
+                headerUploadBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    triggerFcUploadForFolder(grp.prefix);
+                });
+            }
+
             card.appendChild(header);
 
             // Body
             const body = document.createElement('div');
             body.className = 'fc-folder-body';
+
+            // Drag & Drop directly onto card
+            card.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                card.style.borderColor = '#059669';
+                card.style.boxShadow = '0 0 0 3px rgba(5,150,105,0.2)';
+            });
+            card.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                card.style.borderColor = '';
+                card.style.boxShadow = '';
+            });
+            card.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                card.style.borderColor = '';
+                card.style.boxShadow = '';
+                if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    await handleFcUploadToFolder(grp.prefix, Array.from(e.dataTransfer.files));
+                }
+            });
 
             // Files list
             grp.files.forEach((fileObj, fIdx) => {
@@ -3416,6 +4714,86 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 body.appendChild(fileRow);
             });
+
+            // If missing files: render Missing File Slot Cards with direct upload button
+            if (missingDiff > 0) {
+                for (let mIdx = 1; mIdx <= missingDiff; mIdx++) {
+                    const slotNum = grp.files.length + mIdx;
+                    const missingCard = document.createElement('div');
+                    missingCard.className = 'fc-missing-file-slot';
+                    missingCard.style.cssText = `
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        background: #fff5f5;
+                        border: 2px dashed #f87171;
+                        border-radius: 8px;
+                        padding: 10px 14px;
+                        margin-top: 10px;
+                        gap: 12px;
+                        cursor: pointer;
+                        transition: all 0.2s ease;
+                    `;
+                    missingCard.innerHTML = `
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <div style="width: 32px; height: 32px; border-radius: 50%; background: #fee2e2; color: #dc2626; display: flex; align-items: center; justify-content: center; font-size: 0.9rem; font-weight: 800; border: 1.5px solid #fca5a5; flex-shrink: 0;">
+                                ${slotNum}
+                            </div>
+                            <div>
+                                <div style="font-weight: 700; font-size: 0.85rem; color: #dc2626; display: flex; align-items: center; gap: 6px;">
+                                    <i class="fa-solid fa-triangle-exclamation"></i> Missing File #${slotNum} in Folder [${grp.prefix}]
+                                </div>
+                                <div style="font-size: 0.74rem; color: #ef4444; margin-top: 2px;">
+                                    Click here or use the button to attach the missing file (DropShip / IndoPrimo)
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn fc-upload-slot-btn" style="padding: 6px 14px; font-size: 0.8rem; font-weight: 700; border-radius: 6px; background: #dc2626; color: white; border: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 4px rgba(220, 38, 38, 0.25); white-space: nowrap; flex-shrink: 0;">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Upload File
+                        </button>
+                    `;
+                    missingCard.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        triggerFcUploadForFolder(grp.prefix);
+                    });
+                    missingCard.querySelector('.fc-upload-slot-btn').addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        triggerFcUploadForFolder(grp.prefix);
+                    });
+                    missingCard.addEventListener('mouseenter', () => {
+                        missingCard.style.background = '#fef2f2';
+                        missingCard.style.borderColor = '#ef4444';
+                    });
+                    missingCard.addEventListener('mouseleave', () => {
+                        missingCard.style.background = '#fff5f5';
+                        missingCard.style.borderColor = '#f87171';
+                    });
+                    body.appendChild(missingCard);
+                }
+            } else {
+                const completeRow = document.createElement('div');
+                completeRow.style.cssText = `
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-top: 10px;
+                    padding-top: 8px;
+                    border-top: 1px dashed #e2e8f0;
+                `;
+                completeRow.innerHTML = `
+                    <span style="font-size: 0.78rem; color: #059669; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;">
+                        <i class="fa-solid fa-circle-check"></i> All ${expCount} files attached
+                    </span>
+                    <button type="button" class="btn fc-add-more-btn" style="padding: 4px 10px; font-size: 0.75rem; font-weight: 600; border-radius: 6px; background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                        <i class="fa-solid fa-plus"></i> Add Another File
+                    </button>
+                `;
+                completeRow.querySelector('.fc-add-more-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    triggerFcUploadForFolder(grp.prefix);
+                });
+                body.appendChild(completeRow);
+            }
 
             card.appendChild(body);
             modalFcAccordionContainer.appendChild(card);
@@ -3535,9 +4913,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (!confirm(`Are you sure you want to remove "${fileName}" from folder [${prefix}]?`)) return;
 
+        const expCount = getFcExpectedCount();
         grp.files.splice(fileIndex, 1);
-        grp.isError = (grp.files.length !== 3);
-        appendFcLog(`Deleted "${fileName}" from folder [${prefix}]. Folder now has ${grp.files.length}/3 files.`);
+        grp.isError = (grp.files.length !== expCount);
+        appendFcLog(`Deleted "${fileName}" from folder [${prefix}]. Folder now has ${grp.files.length}/${expCount} files.`);
         rebuildFcPackage();
     }
 
@@ -3589,8 +4968,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!fcMoveFoldersList) return;
         fcMoveFoldersList.innerHTML = '';
 
-        // Target folders: folders with < 3 files, excluding sourcePrefix
-        const incompleteTargets = fcFolderGroups.filter(g => g.prefix !== fcSourcePrefixForCopy && g.files.length < 3);
+        // Target folders: folders with < expCount files, excluding sourcePrefix
+        const expCount = getFcExpectedCount();
+        const incompleteTargets = fcFolderGroups.filter(g => g.prefix !== fcSourcePrefixForCopy && g.files.length < expCount);
 
         const search = (fcMoveSearchInput ? fcMoveSearchInput.value : '').trim().toLowerCase();
 
@@ -3603,7 +4983,7 @@ document.addEventListener('DOMContentLoaded', () => {
             fcMoveFoldersList.innerHTML = `
                 <div style="text-align: center; padding: 1.5rem 0.5rem; color: #94a3b8; font-size: 0.85rem;">
                     <i class="fa-solid fa-circle-check" style="color: #059669; font-size: 1.5rem; margin-bottom: 6px;"></i>
-                    <p style="margin: 0;">No incomplete folders (< 3 files) found!</p>
+                    <p style="margin: 0;">No incomplete folders (< ${expCount} files) found!</p>
                 </div>
             `;
             return;
@@ -3621,11 +5001,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div>
                         <div style="font-weight: 600; font-size: 0.85rem; color: #1e293b;">Folder [${grp.prefix}]</div>
                         <div style="font-size: 0.72rem; color: ${alreadyHasFile ? '#b45309' : '#dc2626'}; font-weight: 500;">
-                            ${alreadyHasFile ? '⚠️ Already contains this file' : `Current: ${grp.files.length}/3 files (Needs ${3 - grp.files.length})`}
+                            ${alreadyHasFile ? '⚠️ Already contains this file' : `Current: ${grp.files.length}/${expCount} files (Needs ${expCount - grp.files.length})`}
                         </div>
                     </div>
                 </div>
-                <span class="rename-badge-pill error" style="font-size: 0.72rem; padding: 2px 6px;">${grp.files.length}/3</span>
+                <span class="rename-badge-pill error" style="font-size: 0.72rem; padding: 2px 6px;">${grp.files.length}/${expCount}</span>
             `;
 
             opt.addEventListener('click', (e) => {
@@ -3704,7 +5084,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             file: sourceFileRaw,
                             customRelativePath: `${targetPrefix}/${sourceFileName}`
                         });
-                        grp.isError = (grp.files.length !== 3);
+                        grp.isError = (grp.files.length !== getFcExpectedCount());
                         copiedCount++;
                     }
                 });
@@ -3743,8 +5123,11 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             zipFile.customRelativePath = zipFile.name;
 
-            // Feed directly into Tab 5
-            if (typeof handleInvoiceFilesSelection === 'function') {
+            // Feed directly into Tab 5 (supports both New and Old sub-tabs)
+            const isSubNewActive = subInvoiceNewView && subInvoiceNewView.style.display !== 'none';
+            if (isSubNewActive && typeof invNewHandleDroppedFiles === 'function') {
+                invNewHandleDroppedFiles([zipFile]);
+            } else if (typeof handleInvoiceFilesSelection === 'function') {
                 handleInvoiceFilesSelection([zipFile]);
             }
 
@@ -3911,7 +5294,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 customRelativePath: `${grpMeta.prefix}/${fMeta.name}`
                             });
                         }
-                        grp.isError = (grp.files.length !== 3);
+                        const expRestored = getFcExpectedCount();
+                        grp.isError = (grp.files.length !== expRestored);
                         fcFolderGroups.push(grp);
                     }
                 }
@@ -4011,6 +5395,1632 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+
+
+    // =========================================================================
+    // TAB 5: INVOICE ARRANGE - SUB-TAB SWITCHER & NEW 2-FILE PROCESSOR PIPELINE
+    // =========================================================================
+
+    const btnSubInvoiceNew = document.getElementById('btnSubInvoiceNew');
+    const btnSubInvoiceOld = document.getElementById('btnSubInvoiceOld');
+    const subInvoiceNewView = document.getElementById('subInvoiceNewView');
+    const subInvoiceOldView = document.getElementById('subInvoiceOldView');
+
+    function switchSubInvoiceTab(mode) {
+        if (mode === 'new') {
+            if (btnSubInvoiceNew) {
+                btnSubInvoiceNew.classList.add('active');
+                btnSubInvoiceNew.style.background = '#6366f1';
+                btnSubInvoiceNew.style.color = '#ffffff';
+            }
+            if (btnSubInvoiceOld) {
+                btnSubInvoiceOld.classList.remove('active');
+                btnSubInvoiceOld.style.background = 'transparent';
+                btnSubInvoiceOld.style.color = '#475569';
+            }
+            if (subInvoiceNewView) subInvoiceNewView.style.display = 'block';
+            if (subInvoiceOldView) subInvoiceOldView.style.display = 'none';
+        } else {
+            if (btnSubInvoiceNew) {
+                btnSubInvoiceNew.classList.remove('active');
+                btnSubInvoiceNew.style.background = 'transparent';
+                btnSubInvoiceNew.style.color = '#475569';
+            }
+            if (btnSubInvoiceOld) {
+                btnSubInvoiceOld.classList.add('active');
+                btnSubInvoiceOld.style.background = '#2563eb';
+                btnSubInvoiceOld.style.color = '#ffffff';
+            }
+            if (subInvoiceNewView) subInvoiceNewView.style.display = 'none';
+            if (subInvoiceOldView) subInvoiceOldView.style.display = 'block';
+        }
+    }
+
+    if (btnSubInvoiceNew) {
+        btnSubInvoiceNew.addEventListener('click', () => switchSubInvoiceTab('new'));
+    }
+    if (btnSubInvoiceOld) {
+        btnSubInvoiceOld.addEventListener('click', () => switchSubInvoiceTab('old'));
+    }
+    // Set default active sub-tab
+    switchSubInvoiceTab('new');
+
+    // -------------------------------------------------------------
+    // NEW 2-FILE PROCESSOR (PORTED FROM MYNTRA ENGINE)
+    // -------------------------------------------------------------
+    let invNewFilesList = [];
+    let invNewNextId = 1;
+    let invNewUploadedZipBaseName = "";
+    let invNewIsProcessed = false;
+
+    // UI Elements
+    const invNewDropzone = document.getElementById('invNewDropzone');
+    const invNewFileInput = document.getElementById('invNewFileInput');
+    const invNewFolderInput = document.getElementById('invNewFolderInput');
+    const invNewSelectFilesBtn = document.getElementById('invNewSelectFilesBtn');
+    const invNewSelectFolderBtn = document.getElementById('invNewSelectFolderBtn');
+    const btnInvNewReset = document.getElementById('btnInvNewReset');
+
+    const invNewMappingCard = document.getElementById('invNewMappingCard');
+    const invNewMappingTitle = document.getElementById('invNewMappingTitle');
+    const invNewMappingSingle = document.getElementById('invNewMappingSingle');
+    const invNewMappingBatch = document.getElementById('invNewMappingBatch');
+    const invNewBatchDetectedText = document.getElementById('invNewBatchDetectedText');
+    const invNewSelectOdFile = document.getElementById('invNewSelectOdFile');
+    const invNewSelectDtFile = document.getElementById('invNewSelectDtFile');
+    const invNewBtnProcessAction = document.getElementById('invNewBtnProcessAction');
+
+    const invNewProgressCard = document.getElementById('invNewProgressCard');
+    const invNewProgressPercent = document.getElementById('invNewProgressPercent');
+    const invNewLoadingText = document.getElementById('invNewLoadingText');
+    const invNewProgressBarFill = document.getElementById('invNewProgressBarFill');
+
+    const invNewDashboardControls = document.getElementById('invNewDashboardControls');
+    const invNewStatTotal = document.getElementById('invNewStatTotal');
+    const invNewStatOd = document.getElementById('invNewStatOd');
+    const invNewStatDt = document.getElementById('invNewStatDt');
+    const invNewStatDtSold = document.getElementById('invNewStatDtSold');
+    const invNewStatDtCancelled = document.getElementById('invNewStatDtCancelled');
+    const invNewStatUnmatched = document.getElementById('invNewStatUnmatched');
+
+    const invNewLogTdFilename = document.getElementById('invNewLogTdFilename');
+    const invNewLogTdRange = document.getElementById('invNewLogTdRange');
+    const invNewLogTdDates = document.getElementById('invNewLogTdDates');
+    const invNewLogTdB2p2 = document.getElementById('invNewLogTdB2p2');
+    const invNewBtnCopyLog = document.getElementById('invNewBtnCopyLog');
+
+    const invNewRangeValue = document.getElementById('invNewRangeValue');
+    const invNewBtnCopyRange = document.getElementById('invNewBtnCopyRange');
+
+    const invNewCancelledInvoicesList = document.getElementById('invNewCancelledInvoicesList');
+    const invNewBtnCopyCancelled = document.getElementById('invNewBtnCopyCancelled');
+
+    const invNewInputOdName = document.getElementById('invNewInputOdName');
+    const invNewInputDtName = document.getElementById('invNewInputDtName');
+    const invNewInputCombinedName = document.getElementById('invNewInputCombinedName');
+    const invNewBtnClear = document.getElementById('invNewBtnClear');
+    const invNewBtnDownloadZip = document.getElementById('invNewBtnDownloadZip');
+    const invNewConsoleLogs = document.getElementById('invNewConsoleLogs');
+
+    const invNewEmptyState = document.getElementById('invNewEmptyState');
+    const invNewTableContainer = document.getElementById('invNewTableContainer');
+    const invNewFilesTbody = document.getElementById('invNewFilesTbody');
+    const invNewSearchInput = document.getElementById('invNewSearchInput');
+
+    // Indian State Codes dictionary
+    const INV_NEW_INDIAN_STATE_CODES = {
+        "andaman and nicobar islands": "AN", "andaman & nicobar islands": "AN",
+        "andhra pradesh": "AP", "arunachal pradesh": "AR",
+        "assam": "AS", "bihar": "BR", "chandigarh": "CH",
+        "chhattisgarh": "CG", "chattisgarh": "CG",
+        "dadra and nagar haveli and daman and diu": "DN",
+        "dadra & nagar haveli and daman & diu": "DN",
+        "dadra & nagar haveli & daman & diu": "DN",
+        "dadra and nagar haveli & daman and diu": "DN",
+        "dadra & nagar haveli and daman and diu": "DN",
+        "dadra and nagar haveli & daman & diu": "DN",
+        "dadra and nagar haveli": "DN",
+        "dadra & nagar haveli": "DN",
+        "daman and diu": "DN",
+        "daman & diu": "DN",
+        "delhi": "DL", "new delhi": "DL", "national capital territory of delhi": "DL", "nct of delhi": "DL",
+        "goa": "GA", "gujarat": "GJ", "haryana": "HR", "himachal pradesh": "HP",
+        "jammu and kashmir": "JK", "jammu & kashmir": "JK",
+        "jharkhand": "JH", "karnataka": "KA", "kerala": "KL", "ladakh": "LA",
+        "lakshadweep": "LD", "madhya pradesh": "MP", "maharashtra": "MH", "manipur": "MN",
+        "meghalaya": "ML", "mizoram": "MZ", "nagaland": "NL", "odisha": "OD", "orissa": "OD",
+        "puducherry": "PY", "pondicherry": "PY", "punjab": "PB", "rajasthan": "RJ", "sikkim": "SK",
+        "tamil nadu": "TN", "tamilnadu": "TN", "telangana": "TS", "tripura": "TR",
+        "uttar pradesh": "UP", "uttarakhand": "UK", "uttaranchal": "UK", "west bengal": "WB"
+    };
+
+    function invNewGetIndianStateCode(stateName) {
+        if (!stateName) return "";
+        const rawStr = String(stateName).trim().toLowerCase();
+        
+        // Direct checks for Dadra & Nagar Haveli and Daman & Diu
+        if (rawStr.includes("dadra") || rawStr.includes("daman")) {
+            return "DN";
+        }
+
+        const clean = rawStr.replace(/[\s\.\-_]+/g, ' ');
+        if (INV_NEW_INDIAN_STATE_CODES[clean]) return INV_NEW_INDIAN_STATE_CODES[clean];
+
+        const cleanAnd = rawStr.replace(/&/g, 'and').replace(/[\s\.\-_]+/g, ' ');
+        if (INV_NEW_INDIAN_STATE_CODES[cleanAnd]) return INV_NEW_INDIAN_STATE_CODES[cleanAnd];
+
+        if (/^[a-z]{2}$/i.test(clean)) return clean.toUpperCase();
+        for (const key in INV_NEW_INDIAN_STATE_CODES) {
+            if (clean.includes(key) || key.includes(clean) || cleanAnd.includes(key) || key.includes(cleanAnd)) {
+                return INV_NEW_INDIAN_STATE_CODES[key];
+            }
+        }
+        return String(stateName).trim().toUpperCase();
+    }
+
+    function invNewCleanCell(val) {
+        if (val === undefined || val === null) return "";
+        return String(val).replace(/[\x00-\x1F\x7F-\x9F\u00A0\u200B-\u200D\uFEFF]/g, "").trim();
+    }
+
+    function invNewIsValidOrderRow(row) {
+        if (!row || !Array.isArray(row) || row.length === 0) return false;
+        
+        const hasKeyData = (row[4] !== undefined && invNewCleanCell(row[4]) !== "") ||
+                           (row[6] !== undefined && invNewCleanCell(row[6]) !== "") ||
+                           (row[3] !== undefined && invNewCleanCell(row[3]) !== "") ||
+                           (row[0] !== undefined && invNewCleanCell(row[0]) !== "") ||
+                           (row[1] !== undefined && invNewCleanCell(row[1]) !== "") ||
+                           (row[2] !== undefined && invNewCleanCell(row[2]) !== "") ||
+                           (row[15] !== undefined && invNewCleanCell(row[15]) !== "") ||
+                           (row[16] !== undefined && invNewCleanCell(row[16]) !== "");
+        if (hasKeyData) return true;
+        
+        for (let c = 0; c < row.length; c++) {
+            if (invNewCleanCell(row[c]) !== "") return true;
+        }
+        return false;
+    }
+
+    function invNewStripEmptyCellsFromWorksheet(ws) {
+        if (!ws || !ws['!ref']) return;
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        let maxR = 0;
+        let maxC = 0;
+        let hasAny = false;
+
+        for (let R = range.s.r; R <= range.e.r; R++) {
+            for (let C = range.s.c; C <= range.e.c; C++) {
+                const cellRef = XLSX.utils.encode_cell({ r: R, c: C });
+                const cell = ws[cellRef];
+                if (cell && cell.v !== undefined && cell.v !== null && invNewCleanCell(cell.v) !== "") {
+                    if (R > maxR) maxR = R;
+                    if (C > maxC) maxC = C;
+                    hasAny = true;
+                } else if (cell && (cell.v === "" || cell.v === null || cell.v === undefined || invNewCleanCell(cell.v) === "")) {
+                    delete ws[cellRef];
+                }
+            }
+        }
+        if (hasAny) {
+            ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+        }
+    }
+
+    function invNewCleanKey(v) {
+        if (v === undefined || v === null) return "";
+        let k = String(v).replace(/[`'\x7F-\x9F\x00-\x1F\x80-\x9F\xA0\t\r\n]/g, "").trim();
+        if (k !== "" && !isNaN(Number(k))) {
+            k = String(Math.round(Number(k)));
+        }
+        return k;
+    }
+
+    function invNewFormatDate(val) {
+        if (val === undefined || val === null || val === "") return "";
+        let date;
+        if (val instanceof Date) {
+            date = val;
+        } else {
+            const str = String(val).trim();
+            if (!str) return "";
+            if (!isNaN(Number(str))) {
+                date = new Date((Number(str) - 25569) * 86400000);
+            } else {
+                date = new Date(str);
+            }
+        }
+        if (isNaN(date.getTime())) return String(val).trim();
+        const dd = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const yyyy = date.getFullYear();
+        const hh = String(date.getHours()).padStart(2, '0');
+        const min = String(date.getMinutes()).padStart(2, '0');
+        const ss = String(date.getSeconds()).padStart(2, '0');
+        return `${dd}-${mm}-${yyyy} ${hh}:${min}:${ss}.000`;
+    }
+
+    function invNewParseFormattedDate(dateStr) {
+        if (!dateStr) return null;
+        const parts = String(dateStr).trim().split(' ');
+        if (parts.length < 1) return null;
+        const dateParts = parts[0].split('-');
+        if (dateParts.length !== 3) return null;
+        const day = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const year = parseInt(dateParts[2], 10);
+        let hour = 0, min = 0, sec = 0;
+        if (parts[1]) {
+            const timeParts = parts[1].split(':');
+            hour = parseInt(timeParts[0], 10) || 0;
+            min = parseInt(timeParts[1], 10) || 0;
+            if (timeParts[2]) {
+                sec = parseInt(timeParts[2].split('.')[0], 10) || 0;
+            }
+        }
+        const d = new Date(year, month, day, hour, min, sec);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function invNewReadExcelAsAOA(fileBlob, preferredSheetName = null) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {
+                        type: 'array',
+                        cellDates: true,
+                        raw: false,
+                        defval: ""
+                    });
+                    let sheetName = workbook.SheetNames[0];
+                    if (preferredSheetName) {
+                        const matchedSheet = workbook.SheetNames.find(s => s.toLowerCase() === preferredSheetName.toLowerCase());
+                        if (matchedSheet) sheetName = matchedSheet;
+                    }
+                    const worksheet = workbook.Sheets[sheetName];
+                    const aoa = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+                    while (aoa.length > 0 && !invNewIsValidOrderRow(aoa[aoa.length - 1])) {
+                        aoa.pop();
+                    }
+                    resolve(aoa);
+                } catch (err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = (err) => reject(err);
+            reader.readAsArrayBuffer(fileBlob);
+        });
+    }
+
+    function invNewAddLog(message, type = "info") {
+        if (!invNewConsoleLogs) return;
+        const logLine = document.createElement('div');
+        const color = type === "success" ? "#10b981" : type === "warning" ? "#f59e0b" : type === "error" ? "#ef4444" : "#94a3b8";
+        logLine.style.color = color;
+        logLine.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+        invNewConsoleLogs.appendChild(logLine);
+        invNewConsoleLogs.scrollTop = invNewConsoleLogs.scrollHeight;
+    }
+
+    function invNewClearLogs() {
+        if (invNewConsoleLogs) {
+            invNewConsoleLogs.innerHTML = '<div style="color: #94a3b8;">Ready to run pipeline...</div>';
+        }
+    }
+
+    function invNewShowLoading(text, percent = 0) {
+        if (invNewProgressCard) {
+            invNewProgressCard.style.display = 'block';
+            if (invNewProgressPercent) invNewProgressPercent.textContent = `${percent}%`;
+            if (invNewLoadingText) invNewLoadingText.textContent = text;
+            if (invNewProgressBarFill) invNewProgressBarFill.style.width = `${percent}%`;
+        }
+    }
+
+    function invNewUpdateProgress(percent, text) {
+        if (invNewProgressPercent) invNewProgressPercent.textContent = `${percent}%`;
+        if (invNewLoadingText && text) invNewLoadingText.textContent = text;
+        if (invNewProgressBarFill) invNewProgressBarFill.style.width = `${percent}%`;
+    }
+
+    function invNewHideLoading() {
+        if (invNewProgressCard) {
+            setTimeout(() => {
+                invNewProgressCard.style.display = 'none';
+            }, 600);
+        }
+    }
+
+    function invNewGetPartyCode(fileObj) {
+        if (!fileObj) return "PartyCode";
+        if (fileObj.path && (fileObj.path.includes('/') || fileObj.path.includes('\\'))) {
+            const parts = fileObj.path.split(/[\/\\]/);
+            for (let i = parts.length - 2; i >= 0; i--) {
+                const seg = parts[i].trim();
+                const mPre = seg.match(/^(?:FK|MY)(\d{2,5})/i);
+                if (mPre) return mPre[1];
+                const match = seg.match(/^\d{2,5}/);
+                if (match) return match[0];
+            }
+        }
+        const name = fileObj.name || "";
+        if (name.includes('-')) {
+            const prefix = name.split('-')[0].trim();
+            const mPre = prefix.match(/^(?:FK|MY)?(\d{2,5})/i);
+            if (mPre) return mPre[1];
+            return prefix;
+        }
+        const digitMatch = name.match(/\d{2,5}/);
+        if (digitMatch) return digitMatch[0];
+        return "PartyCode";
+    }
+
+    function invNewGetPartyCodeName(partyCode) {
+        if (!partyCode) return "PartyCode";
+        const codeClean = String(partyCode).trim();
+
+        // 1. Check in-memory flipkartPartyList or localStorage
+        let list = window.flipkartPartyList;
+        if (!list || !Array.isArray(list) || list.length === 0) {
+            try {
+                const cached = localStorage.getItem('flipkart_parties_cache');
+                if (cached) list = JSON.parse(cached);
+            } catch (e) {}
+        }
+
+        if (Array.isArray(list) && list.length > 0) {
+            const found = list.find(item => {
+                if (!item) return false;
+                const c = String(item.CODE || item.code || '').trim();
+                const pc = String(item['PARTY CODE'] || item.partyCode || '').trim();
+                return c === codeClean || pc === codeClean || pc.startsWith(`${codeClean}-`) || pc.startsWith(`${codeClean} -`) || pc.startsWith(`${codeClean}_`);
+            });
+            if (found) {
+                const rawPartyCode = found['PARTY CODE'] || found.partyCode || found.name || '';
+                if (rawPartyCode) {
+                    return rawPartyCode.replace(/\s*-\s*/, '-').trim().toUpperCase();
+                }
+            }
+        }
+
+        // 2. Default known Flipkart parties fallback
+        const defaultParties = {
+            "101": "101-BHARVITA",
+            "509": "509-VIVATRA",
+            "128": "128-BAGHADELLO",
+            "200": "200-FOCUS STYLE",
+            "178": "178-COLORBOOK",
+            "150": "150-ZOMBOM",
+            "544": "544-HOUSE OF PRANSHI"
+        };
+        if (defaultParties[codeClean]) {
+            return defaultParties[codeClean];
+        }
+
+        // 3. Check uploaded files or folder paths for party name (e.g. "101-Bharvita")
+        if (typeof invNewFilesList !== "undefined" && invNewFilesList.length > 0) {
+            const partyFiles = invNewFilesList.filter(f => f.partyCode === codeClean || (f.path && f.path.includes(codeClean)));
+            for (const f of partyFiles) {
+                if (f.path && (f.path.includes('/') || f.path.includes('\\'))) {
+                    const parts = f.path.split(/[\/\\]/);
+                    for (let i = parts.length - 1; i >= 0; i--) {
+                        const seg = parts[i].trim();
+                        if (seg.startsWith(codeClean) && /[a-zA-Z]/.test(seg)) {
+                            const cleanSeg = seg.replace(/\s*\(Admin\)/i, '').replace(/\s*-\s*/, '-').trim().toUpperCase();
+                            return cleanSeg;
+                        }
+                    }
+                }
+            }
+        }
+
+        return codeClean;
+    }
+
+    function invNewCreateFileObject(name, path, ext, fileBlob) {
+        let category = 'unmatched';
+        let renamedName = name;
+        const lowerName = name.toLowerCase();
+
+        if (lowerName.includes('dropship') || lowerName.includes('seller_orders_report') || lowerName.includes('flipkart_merged_orders') || lowerName.includes('merged_orders') || (lowerName.endsWith('-od.xlsx') || lowerName.endsWith('-od.xls'))) {
+            category = 'OD';
+            renamedName = ext ? `OD.${ext}` : 'OD';
+        } else if (lowerName.includes('indoprimo') || lowerName.includes('itemdetails') || lowerName.includes('taxreport') || lowerName.includes('taxsales') || lowerName.includes('tax') || lowerName.includes('saledata') || (lowerName.endsWith('-dt.xlsx') || lowerName.endsWith('-dt.xls'))) {
+            category = 'DT';
+            renamedName = ext ? `DT.${ext}` : 'DT';
+        } else if (lowerName.includes('summary') || lowerName.includes('details') || lowerName.includes('arrange')) {
+            category = 'Summary';
+        }
+
+        return {
+            id: invNewNextId++,
+            name: name,
+            path: path,
+            ext: ext,
+            originalFile: fileBlob,
+            category: category,
+            renamedName: renamedName
+        };
+    }
+
+    function invNewProcessSingleFile(file) {
+        const relativePath = file.webkitRelativePath || file.name;
+        const ext = file.name.split('.').pop();
+        const lowerExt = ext.toLowerCase();
+        if (lowerExt !== 'xlsx' && lowerExt !== 'xls' && lowerExt !== 'csv') return;
+        const fileObj = invNewCreateFileObject(file.name, relativePath, ext, file);
+        invNewFilesList.push(fileObj);
+    }
+
+    async function invNewProcessZipFile(zipFile) {
+        const zip = await JSZip.loadAsync(zipFile);
+        const promises = [];
+        const zipName = zipFile.name;
+        const zipDigitsMatch = zipName.match(/\d+/);
+        const zipDigits = zipDigitsMatch ? zipDigitsMatch[0] : null;
+        const zipBaseName = zipName.substring(0, zipName.lastIndexOf('.')) || zipName;
+
+        zip.forEach((relativePath, zipEntry) => {
+            if (!zipEntry.dir) {
+                const ext = zipEntry.name.split('.').pop();
+                const lowerExt = ext.toLowerCase();
+                if (lowerExt !== 'xlsx' && lowerExt !== 'xls' && lowerExt !== 'csv') return;
+                const promise = zipEntry.async("blob").then((blob) => {
+                    const filename = zipEntry.name.split('/').pop();
+                    let adjustedPath = relativePath;
+                    const pathParts = relativePath.split('/');
+                    let hasNumericFolder = false;
+                    for (let i = 0; i < pathParts.length - 1; i++) {
+                        if (/^\d+/.test(pathParts[i])) {
+                            hasNumericFolder = true;
+                            break;
+                        }
+                    }
+                    if (!hasNumericFolder) {
+                        const prefix = zipDigits || zipBaseName;
+                        adjustedPath = `${prefix}/${relativePath}`;
+                    }
+                    const fileObj = invNewCreateFileObject(filename, adjustedPath, ext, blob);
+                    invNewFilesList.push(fileObj);
+                });
+                promises.push(promise);
+            }
+        });
+        await Promise.all(promises);
+    }
+
+    async function invNewHandleDroppedFiles(files) {
+        if (!files || files.length === 0) return;
+        try {
+            invNewShowLoading("Reading files...", 10);
+            let zipFound = false;
+
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (file.name.toLowerCase().endsWith('.zip')) {
+                    zipFound = true;
+                    const dotIdx = file.name.lastIndexOf('.');
+                    invNewUploadedZipBaseName = dotIdx !== -1 ? file.name.substring(0, dotIdx) : file.name;
+                    await invNewProcessZipFile(file);
+                } else {
+                    invNewProcessSingleFile(file);
+                }
+            }
+
+            invNewHideLoading();
+            if (invNewFilesList.length > 0) {
+                if (invNewEmptyState) invNewEmptyState.style.display = 'none';
+                if (invNewTableContainer) invNewTableContainer.style.display = 'block';
+                if (invNewMappingCard) invNewMappingCard.style.display = 'block';
+                if (invNewDashboardControls) invNewDashboardControls.style.display = 'none';
+
+                invNewPopulateSelectors();
+                invNewRenderFilesTable();
+                invNewAddLog(`${invNewFilesList.length} files loaded. Confirm mapping and click Process.`, "info");
+            } else {
+                alert("No valid Excel or CSV files found.");
+            }
+        } catch (err) {
+            console.error(err);
+            invNewHideLoading();
+            alert("Error reading files: " + err.message);
+        }
+    }
+
+    function invNewGetUniquePartyCodes() {
+        const codes = new Set();
+        invNewFilesList.forEach(file => {
+            if (file.category === "Combined" || file.name.includes("GST NOT APPLICABLE") || file.name.includes("2 MORE INVOICE") || file.name.includes("SUMMARY")) return;
+            const code = invNewGetPartyCode(file);
+            if (code && code !== "PartyCode") codes.add(code);
+        });
+        return Array.from(codes);
+    }
+
+    function invNewPopulateSelectors() {
+        const uniqueCodes = invNewGetUniquePartyCodes();
+
+        if (uniqueCodes.length > 1) {
+            // Batch mode
+            if (invNewMappingTitle) invNewMappingTitle.textContent = `Batch Mode (${uniqueCodes.length} Parties Detected)`;
+            if (invNewMappingSingle) invNewMappingSingle.style.display = 'none';
+            if (invNewMappingBatch) invNewMappingBatch.style.display = 'block';
+            if (invNewBatchDetectedText) {
+                invNewBatchDetectedText.innerHTML = `Detected <b>${uniqueCodes.length}</b> unique party codes: <span style="color: #6366f1; font-weight: 700;">${uniqueCodes.join(', ')}</span>`;
+            }
+            return;
+        }
+
+        // Single mode
+        if (invNewMappingTitle) invNewMappingTitle.textContent = "Confirm File Mapping (2 Files)";
+        if (invNewMappingSingle) invNewMappingSingle.style.display = 'flex';
+        if (invNewMappingBatch) invNewMappingBatch.style.display = 'none';
+
+        if (invNewSelectOdFile) invNewSelectOdFile.innerHTML = '<option value="">-- Choose DropShip File --</option>';
+        if (invNewSelectDtFile) invNewSelectDtFile.innerHTML = '<option value="">-- Choose IndoPrimo File --</option>';
+
+        invNewFilesList.forEach(file => {
+            const displayPath = file.path.length > 50 ? '...' + file.path.slice(-47) : file.path;
+            const opt = `<option value="${file.id}">${displayPath}</option>`;
+            if (invNewSelectOdFile) invNewSelectOdFile.insertAdjacentHTML('beforeend', opt);
+            if (invNewSelectDtFile) invNewSelectDtFile.insertAdjacentHTML('beforeend', opt);
+        });
+
+        // Auto selection
+        const dropShipFile = invNewFilesList.find(f => f.category === 'OD' || f.name.toLowerCase().includes('dropship') || f.name.toLowerCase().includes('seller_orders_report') || f.name.toLowerCase().includes('flipkart_merged_orders'));
+        const indoPrimoFile = invNewFilesList.find(f => f.name.toLowerCase().includes('indoprimo') || f.name.toLowerCase().includes('itemdetails') || f.name.toLowerCase().includes('sale') || f.name.toLowerCase().includes('tax') || (f !== dropShipFile && f.category !== 'OD'));
+
+        if (dropShipFile && invNewSelectOdFile) invNewSelectOdFile.value = dropShipFile.id;
+        if (indoPrimoFile && invNewSelectDtFile) invNewSelectDtFile.value = indoPrimoFile.id;
+    }
+
+    function invNewRenderFilesTable() {
+        if (!invNewFilesTbody) return;
+        invNewFilesTbody.innerHTML = '';
+        const query = (invNewSearchInput ? invNewSearchInput.value : '').toLowerCase().trim();
+
+        const filtered = invNewFilesList.filter(f => 
+            f.name.toLowerCase().includes(query) || f.path.toLowerCase().includes(query) || f.category.toLowerCase().includes(query)
+        );
+
+        if (filtered.length === 0) {
+            invNewFilesTbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 1.5rem;">No matching files found.</td></tr>';
+            return;
+        }
+
+        filtered.forEach((file, idx) => {
+            const tr = document.createElement('tr');
+            const catBadge = file.category === 'OD' ? '<span class="rename-badge-pill success">OD File</span>'
+                           : file.category === 'DT' ? '<span class="rename-badge-pill info">DT File</span>'
+                           : file.category === 'IndoPrimo' ? '<span class="rename-badge-pill" style="background: #e0e7ff; color: #4338ca;">IndoPrimo</span>'
+                           : file.category === 'Summary' ? '<span class="rename-badge-pill" style="background: #fef3c7; color: #b45309; font-weight: 700;">Summary</span>'
+                           : '<span class="rename-badge-pill error">Extra/Report</span>';
+
+            tr.innerHTML = `
+                <td>
+                    <div style="font-weight: 600; color: #1e293b; font-size: 0.85rem;">${file.name}</div>
+                    <div style="font-size: 0.72rem; color: #64748b;">${file.path}</div>
+                </td>
+                <td>${catBadge}</td>
+                <td>
+                    <span style="font-weight: 600; color: #0284c7;">${file.renamedName || file.name}</span>
+                </td>
+                <td style="text-align: center;">
+                    <button type="button" class="btn btn-secondary inv-new-del-btn" data-id="${file.id}" style="padding: 4px 8px; font-size: 0.75rem; color: #dc2626; border-radius: 6px;">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+                </td>
+            `;
+
+            tr.querySelector('.inv-new-del-btn').addEventListener('click', (e) => {
+                const fId = parseInt(e.currentTarget.getAttribute('data-id'));
+                invNewFilesList = invNewFilesList.filter(f => f.id !== fId);
+                if (invNewFilesList.length === 0) {
+                    if (invNewEmptyState) invNewEmptyState.style.display = 'block';
+                    if (invNewTableContainer) invNewTableContainer.style.display = 'none';
+                    if (invNewMappingCard) invNewMappingCard.style.display = 'none';
+                } else {
+                    invNewPopulateSelectors();
+                    invNewRenderFilesTable();
+                }
+            });
+
+            invNewFilesTbody.appendChild(tr);
+        });
+    }
+
+    // -------------------------------------------------------------
+    // CORE 2-FILE PIPELINE EXECUTION
+    // -------------------------------------------------------------
+    async function invNewProcessPartyPipeline2Files(dropShipFileObj, indoPrimoFileObj, partyCode, isBatchMode = false) {
+        invNewAddLog(`--- Processing Party: ${partyCode} (2-File Pipeline) ---`, "warning");
+
+        // 1. Read sheet data
+        invNewAddLog(`[${partyCode}] Reading DropShip and IndoPrimo sheets...`, "info");
+        const dropShipRows = await invNewReadExcelAsAOA(dropShipFileObj.originalFile);
+        const indoPrimoRows = await invNewReadExcelAsAOA(indoPrimoFileObj.originalFile, 'SaleData');
+
+        if (!dropShipRows || dropShipRows.length < 2) {
+            throw new Error(`DropShip file for party ${partyCode} has no data rows.`);
+        }
+
+        // 2. Build IndoPrimo Key Set (=B3&G3)
+        invNewAddLog(`[${partyCode}] Building IndoPrimo Dictionary (Columns B & G, row 3 onwards)...`, "info");
+        const indoKeySet = new Set();
+        const indoKeySetStrict = new Set();
+
+        for (let r = 2; r < indoPrimoRows.length; r++) {
+            const row = indoPrimoRows[r];
+            if (!row) continue;
+            const bVal = invNewCleanCell(row[1]);
+            const gVal = invNewCleanCell(row[6]).replace(/\.0+$/, '').replace(/^[`']/, '').trim();
+            if (bVal && gVal) {
+                const combined = bVal + gVal;
+                indoKeySet.add(invNewCleanKey(combined));
+                indoKeySetStrict.add(combined.toLowerCase().replace(/[\s\-_]/g, ''));
+            }
+        }
+        // Check row 2 (index 1) if not header
+        if (indoPrimoRows.length > 1) {
+            const r1 = indoPrimoRows[1];
+            const b1 = invNewCleanCell(r1[1]);
+            const g1 = invNewCleanCell(r1[6]);
+            const isHdr = /order|item|sku|invoice|code|id|date/i.test(b1 + g1);
+            if (!isHdr && b1 && g1) {
+                const combined = b1 + g1;
+                indoKeySet.add(invNewCleanKey(combined));
+                indoKeySetStrict.add(combined.toLowerCase().replace(/[\s\-_]/g, ''));
+            }
+        }
+        invNewAddLog(`[${partyCode}] Dictionary loaded with ${indoKeySet.size} unique keys.`, "success");
+
+        // 3. Filter DropShip File: Delete matched rows where =G2&E2 in IndoKeySet
+        invNewAddLog(`[${partyCode}] Filtering DropShip: Deleting invoiced rows against IndoPrimo keys...`, "info");
+        const headerRow = dropShipRows[0] || [];
+        let cleanDropShipRows = [headerRow];
+        let deletedCount = 0;
+
+        const findColIndex = (name, fallback) => {
+            const lowerName = name.toLowerCase();
+            let idx = headerRow.findIndex(h => String(h || "").trim().toLowerCase() === lowerName);
+            if (idx !== -1) return idx;
+            idx = headerRow.findIndex(h => String(h || "").trim().toLowerCase().includes(lowerName));
+            return idx !== -1 ? idx : fallback;
+        };
+
+        const idxTaxRate = findColIndex("Tax Rate", 41);
+        const idxSellingPrice = findColIndex("Selling Price", 47);
+        const idxItemPrice = findColIndex("Item Price(Excluding Tax)", findColIndex("Item Price", 49));
+        const idxTaxAmount = findColIndex("Tax", findColIndex("IGST Rate", 59));
+        const idxIgst = findColIndex("IGST", findColIndex("IGST Amount", 60));
+        const idxCgst = findColIndex("CGST", findColIndex("CGST Amount", 61));
+        const idxSgst = findColIndex("SGST", findColIndex("SGST Amount", 62));
+        const idxBillingState = findColIndex("Billing State", findColIndex("State", 87));
+        const idxQuantity = findColIndex("Quantity", findColIndex("Item Quantity", findColIndex("Qty", -1)));
+        const idxHsn = headerRow.findIndex(h => String(h || "").trim().toLowerCase().includes("hsn")) !== -1
+            ? headerRow.findIndex(h => String(h || "").trim().toLowerCase().includes("hsn"))
+            : 25;
+
+        for (let r = 1; r < dropShipRows.length; r++) {
+            const row = dropShipRows[r];
+            if (!row || !invNewIsValidOrderRow(row)) continue;
+            const gVal = invNewCleanCell(row[6]).replace(/\.0+$/, '').replace(/^[`']/, '').trim();
+            const eVal = invNewCleanCell(row[4]).replace(/\.0+$/, '').replace(/^[`']/, '').trim();
+            const dropShipKey = invNewCleanKey(gVal + eVal);
+            const dropShipKeyStrict = (gVal + eVal).toLowerCase().replace(/[\s\-_]/g, '');
+            const dwKey = invNewCleanKey(invNewCleanCell(row[126])).replace(/\.0+$/, '').replace(/^[`']/, '').trim();
+            const dwKeyStrict = invNewCleanCell(row[126]).replace(/\.0+$/, '').replace(/^[`']/, '').trim().toLowerCase().replace(/[\s\-_]/g, '');
+
+            const isMatched = (dropShipKey !== "" && indoKeySet.has(dropShipKey)) ||
+                              (dropShipKeyStrict !== "" && indoKeySetStrict.has(dropShipKeyStrict)) ||
+                              (dwKey !== "" && indoKeySet.has(dwKey)) ||
+                              (dwKeyStrict !== "" && indoKeySetStrict.has(dwKeyStrict));
+
+            if (isMatched) {
+                deletedCount++;
+            } else {
+                const cloned = [...row];
+                if (cloned[11] !== undefined && cloned[11] !== "") cloned[11] = invNewFormatDate(cloned[11]);
+                if (cloned[12] !== undefined && cloned[12] !== "") cloned[12] = invNewFormatDate(cloned[12]);
+                while (cloned.length > 0 && (cloned[cloned.length - 1] === undefined || cloned[cloned.length - 1] === null || invNewCleanCell(cloned[cloned.length - 1]) === "")) {
+                    cloned.pop();
+                }
+                if (invNewIsValidOrderRow(cloned)) {
+                    cleanDropShipRows.push(cloned);
+                }
+            }
+        }
+        invNewAddLog(`[${partyCode}] Filtered: Deleted ${deletedCount} invoiced rows. Remaining: ${cleanDropShipRows.length - 1} clean rows.`, "success");
+
+        // 4. Date Range & Metadata
+        let minDate = null;
+        let maxDate = null;
+        for (let r = 1; r < cleanDropShipRows.length; r++) {
+            const row = cleanDropShipRows[r];
+            const dateVal = row[12] || row[11];
+            if (dateVal) {
+                const parsed = invNewParseFormattedDate(dateVal);
+                if (parsed) {
+                    if (!minDate || parsed < minDate) minDate = parsed;
+                    if (!maxDate || parsed > maxDate) maxDate = parsed;
+                }
+            }
+        }
+
+        let dateRangeStr = "—";
+        if (minDate && maxDate) {
+            const padZero = (n) => String(n).padStart(2, '0');
+            dateRangeStr = `${padZero(minDate.getDate())}-${padZero(minDate.getMonth()+1)}-${minDate.getFullYear()} TO ${padZero(maxDate.getDate())}-${padZero(maxDate.getMonth()+1)}-${maxDate.getFullYear()}`;
+        }
+
+        const row1 = cleanDropShipRows[1] || [];
+        const b2Val = invNewCleanCell(row1[125]) || invNewCleanCell(row1[1]);
+        const p2Val = invNewCleanCell(row1[0]) || invNewCleanCell(row1[15]);
+        const b2p2String = (b2Val || p2Val) ? `${b2Val}/${p2Val}` : "—";
+
+        // 5. GST Not Applicable Checks & Calculations
+        const gstRows = [["EE Invoice No", "Order Status", "Invoice Date", "Item Quantity", "Selling Price", "Item Price(Excluding Tax)"]];
+        const dtCellStyles = {};
+        const gstCellStyles = {};
+        let shadeIndex = 1;
+        let gstCreated = false;
+
+        for (let r = 1; r < cleanDropShipRows.length; r++) {
+            const row = cleanDropShipRows[r];
+            if (!row || !invNewIsValidOrderRow(row)) continue;
+            const invoiceNo = invNewCleanCell(row[6]) || invNewCleanCell(row[3]);
+            const taxRate = invNewCleanCell(row[idxTaxRate]);
+            const taxNum = parseFloat(taxRate);
+            const isTaxMissing = (taxRate === "" || taxRate === "0" || taxRate === "0%" || taxRate === "0.00" || taxNum === 0 || isNaN(taxNum) || taxRate.toLowerCase().includes("not") || taxRate.toLowerCase().includes("n/a"));
+
+            if (invoiceNo !== "" && isTaxMissing) {
+                gstCreated = true;
+                const newGstRow = [
+                    invoiceNo,
+                    invNewCleanCell(row[8]) || "Sold",
+                    invNewCleanCell(row[12]) || invNewCleanCell(row[11]) || "",
+                    invNewCleanCell(row[idxQuantity !== -1 ? idxQuantity : 17]) || "1",
+                    invNewCleanCell(row[idxSellingPrice]) || "",
+                    invNewCleanCell(row[idxItemPrice]) || ""
+                ];
+                gstRows.push(newGstRow);
+
+                const Rc = 170 + ((shadeIndex * 37) % 80);
+                const Gc = 170 + ((shadeIndex * 67) % 80);
+                const Bc = 170 + ((shadeIndex * 97) % 80);
+                const hexColor = ((1 << 24) + (Rc << 16) + (Gc << 8) + Bc).toString(16).slice(1).toUpperCase();
+                const destRow = gstRows.length - 1;
+                for (let c = 0; c < 6; c++) {
+                    gstCellStyles[`${destRow},${c}`] = { fill: { fgColor: { rgb: hexColor } } };
+                }
+
+                const targetLen = Math.max(idxTaxRate, idxSellingPrice, idxItemPrice, idxTaxAmount, idxIgst, idxCgst, idxSgst, idxBillingState, 87) + 1;
+                while (row.length < targetLen) row.push("");
+
+                row[idxTaxRate] = 5;
+                const valAV = parseFloat(String(row[idxSellingPrice] || "").replace(/,/g, "")) || 0;
+                const round0 = (v) => Math.round(v);
+                const round4 = (v) => Math.round(v * 10000) / 10000;
+                const valAX = round0(valAV / 1.05);
+                row[idxItemPrice] = valAX;
+                const roundPart = round4(valAV / 1.05);
+                row[idxTaxAmount] = round4(valAV - roundPart);
+
+                const stateVal = (invNewCleanCell(row[idxBillingState]) || invNewCleanCell(row[39]) || invNewCleanCell(row[87])).toLowerCase().trim();
+                if (stateVal.includes("gujarat") || stateVal === "gj") {
+                    row[idxIgst] = "0";
+                    const valHalf = round4((valAV - roundPart) / 2);
+                    row[idxCgst] = valHalf;
+                    row[idxSgst] = valHalf;
+                } else {
+                    row[idxIgst] = round4(valAV - roundPart);
+                    row[idxCgst] = "0";
+                    row[idxSgst] = "0";
+                }
+
+                dtCellStyles[`${r},6`] = { fill: { fgColor: { rgb: "C8FFC8" } } };
+                dtCellStyles[`${r},8`] = { fill: { fgColor: { rgb: "C8FFC8" } } };
+                dtCellStyles[`${r},12`] = { fill: { fgColor: { rgb: "C8FFC8" } } };
+                dtCellStyles[`${r},${idxQuantity !== -1 ? idxQuantity : 17}`] = { fill: { fgColor: { rgb: "C8FFC8" } } };
+                dtCellStyles[`${r},${idxSellingPrice}`] = { fill: { fgColor: { rgb: "C8FFC8" } } };
+                dtCellStyles[`${r},${idxItemPrice}`] = { fill: { fgColor: { rgb: "C8FFC8" } } };
+                dtCellStyles[`${r},${idxTaxRate}`] = { fill: { fgColor: { rgb: "B4F0B4" } } };
+
+                shadeIndex++;
+            }
+        }
+
+        // 6. Extrapolate Invoice Range strictly from Column G
+        let minNum = Infinity;
+        let maxNum = -Infinity;
+        let invoicePrefix = "";
+
+        for (let r = 1; r < cleanDropShipRows.length; r++) {
+            const row = cleanDropShipRows[r];
+            const valG = invNewCleanCell(row[6]);
+            if (valG) {
+                const parts = valG.split('-');
+                if (parts.length >= 2) {
+                    const lastPart = parts[parts.length - 1];
+                    const curNum = parseInt(lastPart, 10);
+                    if (!isNaN(curNum) && curNum > 0) {
+                        if (curNum < minNum) minNum = curNum;
+                        if (curNum > maxNum) maxNum = curNum;
+                        if (!invoicePrefix) invoicePrefix = parts.slice(0, -1).join('-');
+                    }
+                } else {
+                    const curNum = parseInt(valG, 10);
+                    if (!isNaN(curNum) && curNum > 0) {
+                        if (curNum < minNum) minNum = curNum;
+                        if (curNum > maxNum) maxNum = curNum;
+                    }
+                }
+            }
+        }
+
+        let generatedRange = (minNum !== Infinity && maxNum !== -Infinity)
+            ? (invoicePrefix ? `${invoicePrefix}-${minNum}-${maxNum}` : `${minNum}-${maxNum}`)
+            : "RangeNotFound";
+        invNewAddLog(`[${partyCode}] Invoice Range: ${generatedRange}`, "success");
+
+        // 7. Duplicate Invoices check in Column G
+        const invoiceCounts = new Map();
+        for (let r = 1; r < cleanDropShipRows.length; r++) {
+            const rRow = cleanDropShipRows[r];
+            if (!rRow || !invNewIsValidOrderRow(rRow)) continue;
+            const val = invNewCleanCell(rRow[6]);
+            if (val !== "") invoiceCounts.set(val, (invoiceCounts.get(val) || 0) + 1);
+        }
+
+        let duplicateFound = false;
+        const duplicateRows = [["DUPLICATE INVOICE", "COUNT"]];
+        const duplicateList = [];
+        for (const [inv, count] of invoiceCounts.entries()) {
+            if (count > 1) {
+                duplicateFound = true;
+                duplicateRows.push([inv, count]);
+                duplicateList.push(inv);
+            }
+        }
+
+        // 8. Generate 18-Column Combined Master (OD) Sheet
+        const combinedRows = [[
+            "Order ID", "Invoice ID", "New Invoice ID", "Invoice Reference Number (IRN)",
+            "Shipment date", "Invoice date", "GST ID", "SKU ID", "SKU", "Item Title",
+            "Quantity", "Item Cost", "GST Rate", "CESS Rate", "HSN", "Warehouse Code/Name",
+            "Status", "state code"
+        ]];
+
+        for (let r = 1; r < cleanDropShipRows.length; r++) {
+            const row = cleanDropShipRows[r];
+            if (!row || !invNewIsValidOrderRow(row)) continue;
+            const newRow = new Array(18).fill("");
+            newRow[0] = invNewCleanCell(row[4]).replace(/^[`']/, '').trim();
+            newRow[1] = invNewCleanCell(row[7]); // Taken from Column H of DT file
+            newRow[2] = invNewCleanCell(row[6]);
+            newRow[3] = "";
+            newRow[4] = invNewFormatDate(row[11]);
+            newRow[5] = invNewFormatDate(row[12]);
+            newRow[6] = "24AAECE9149B1ZU";
+            newRow[7] = "";
+            newRow[8] = "";
+            newRow[9] = invNewCleanCell(row[23]);
+
+            let qty = 1;
+            if (idxQuantity !== -1 && row[idxQuantity] !== undefined && String(row[idxQuantity]).trim() !== "") {
+                qty = invNewCleanCell(row[idxQuantity]);
+            }
+            newRow[10] = qty;
+
+            let costVal = "";
+            if (idxItemPrice !== -1 && row[idxItemPrice] !== undefined && String(row[idxItemPrice]).trim() !== "") {
+                costVal = row[idxItemPrice];
+            } else if (row[49] !== undefined && String(row[49]).trim() !== "") {
+                costVal = row[49];
+            } else if (row[47] !== undefined && String(row[47]).trim() !== "") {
+                costVal = row[47];
+            }
+            newRow[11] = costVal;
+            newRow[12] = "5%";
+            newRow[13] = "";
+
+            let hsnVal = "";
+            if (idxHsn !== -1 && row[idxHsn] !== undefined && String(row[idxHsn]).trim() !== "") {
+                hsnVal = invNewCleanCell(row[idxHsn]);
+            } else if (row[25] !== undefined && String(row[25]).trim() !== "") {
+                hsnVal = invNewCleanCell(row[25]);
+            }
+            newRow[14] = hsnVal;
+
+            const colDV = invNewCleanCell(row[125]);
+            const colA = invNewCleanCell(row[0]);
+            newRow[15] = (colDV && colA) ? `${colDV}/${colA}` : (colDV || colA);
+            newRow[16] = "Not Submitted";
+            newRow[17] = invNewGetIndianStateCode(invNewCleanCell(row[39]));
+
+            combinedRows.push(newRow);
+        }
+
+        // 9. Formulate Filenames
+        const dtNameStr = invoicePrefix ? `${partyCode}-(${invoicePrefix}-${minNum}-${maxNum})-DT` : `${partyCode}-(${minNum}-${maxNum})-DT`;
+        const odNameStr = invoicePrefix ? `${partyCode}-(${invoicePrefix}-${minNum}-${maxNum})-OD` : `${partyCode}-(${minNum}-${maxNum})-OD`;
+        const finalDtFileName = `${dtNameStr}.xlsx`;
+        const finalOdFileName = `${odNameStr}.xlsx`;
+
+        if (!isBatchMode) {
+            if (invNewInputOdName) invNewInputOdName.value = odNameStr;
+            if (invNewInputDtName) invNewInputDtName.value = dtNameStr;
+            if (invNewInputCombinedName) invNewInputCombinedName.value = odNameStr;
+            if (invNewRangeValue) invNewRangeValue.textContent = generatedRange;
+        }
+
+        // 10. Compile Workbooks & Blobs (Filtered strictly to zero blank/ghost rows)
+        const finalCleanDropShipRows = cleanDropShipRows.filter((r, idx) => idx === 0 || invNewIsValidOrderRow(r));
+        const finalCleanOdRows = combinedRows.filter((r, idx) => idx === 0 || invNewIsValidOrderRow(r));
+
+        const dtWS = XLSX.utils.aoa_to_sheet(finalCleanDropShipRows);
+        invNewStripEmptyCellsFromWorksheet(dtWS);
+        const dtWB = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(dtWB, dtWS, "DT");
+        for (const key in dtCellStyles) {
+            const [r, c] = key.split(',').map(Number);
+            const cellRef = XLSX.utils.encode_cell({ r, c });
+            if (dtWS[cellRef]) dtWS[cellRef].s = dtCellStyles[key];
+        }
+        const dtArrayBuffer = XLSX.write(dtWB, { bookType: 'xlsx', type: 'array' });
+        const dtBlob = new Blob([dtArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+        const odWS = XLSX.utils.aoa_to_sheet(finalCleanOdRows);
+        invNewStripEmptyCellsFromWorksheet(odWS);
+        const odWB = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(odWB, odWS, "Combined Master");
+        const odArrayBuffer = XLSX.write(odWB, { bookType: 'xlsx', type: 'array' });
+        const odBlob = new Blob([odArrayBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+
+        // Update file states
+        dropShipFileObj.originalFile = dtBlob;
+        dropShipFileObj.renamedName = finalDtFileName;
+        dropShipFileObj.category = "DT";
+        dropShipFileObj.partyCode = partyCode;
+        dropShipFileObj.partyRange = generatedRange;
+        dropShipFileObj.parsedAOA = finalCleanDropShipRows;
+        dropShipFileObj.cellStyles = dtCellStyles;
+
+        if (indoPrimoFileObj) {
+            indoPrimoFileObj.category = "IndoPrimo";
+        }
+
+        invNewFilesList.push({
+            id: invNewNextId++,
+            name: finalOdFileName,
+            path: finalOdFileName,
+            ext: "xlsx",
+            originalFile: odBlob,
+            category: "OD",
+            renamedName: finalOdFileName,
+            partyCode: partyCode,
+            partyRange: generatedRange,
+            parsedAOA: combinedRows
+        });
+
+        // GST Not Applicable file
+        if (gstCreated && gstRows.length > 1) {
+            const gstWS = XLSX.utils.aoa_to_sheet(gstRows);
+            const gstWB = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(gstWB, gstWS, "GST NOT APPLICABLE");
+            for (const key in gstCellStyles) {
+                const [r, c] = key.split(',').map(Number);
+                const cellRef = XLSX.utils.encode_cell({ r, c });
+                if (gstWS[cellRef]) gstWS[cellRef].s = gstCellStyles[key];
+            }
+            const gstBuffer = XLSX.write(gstWB, { bookType: 'xlsx', type: 'array' });
+            const gstBlob = new Blob([gstBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const gstFileName = `${partyCode}-GST NOT APPLICABLE.xlsx`;
+            invNewFilesList.push({
+                id: invNewNextId++,
+                name: gstFileName,
+                path: gstFileName,
+                ext: "xlsx",
+                originalFile: gstBlob,
+                category: "unmatched",
+                renamedName: "GST NOT APPLICABLE.xlsx",
+                partyCode: partyCode,
+                partyRange: generatedRange,
+                parsedAOA: gstRows,
+                cellStyles: gstCellStyles
+            });
+            invNewAddLog(`[${partyCode}] Generated ${gstFileName} (${gstRows.length - 1} records).`, "warning");
+        }
+
+        // Duplicate Invoices file
+        if (duplicateFound) {
+            const dupWS = XLSX.utils.aoa_to_sheet(duplicateRows);
+            const dupWB = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(dupWB, dupWS, "DUPLICATES");
+            const dupBuffer = XLSX.write(dupWB, { bookType: 'xlsx', type: 'array' });
+            const dupBlob = new Blob([dupBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            const dupFileName = `${partyCode}-2 MORE INVOICE.xlsx`;
+            invNewFilesList.push({
+                id: invNewNextId++,
+                name: dupFileName,
+                path: dupFileName,
+                ext: "xlsx",
+                originalFile: dupBlob,
+                category: "unmatched",
+                renamedName: "2 MORE INVOICE.xlsx",
+                partyCode: partyCode,
+                partyRange: generatedRange,
+                parsedAOA: duplicateRows
+            });
+            invNewAddLog(`[${partyCode}] Generated ${dupFileName} (${duplicateRows.length - 1} duplicate invoices).`, "warning");
+        }
+
+        // Metrics returned for Master Summary Report (No individual party summary file generated in folder)
+
+        return {
+            partyCode: partyCode,
+            partyName: invNewGetPartyCodeName(partyCode),
+            odName: finalOdFileName,
+            dtName: finalDtFileName,
+            generatedRange: generatedRange,
+            dateRangeStr: dateRangeStr,
+            b2p2String: b2p2String,
+            soldCnt: finalCleanDropShipRows.length - 1,
+            cancelCnt: deletedCount,
+            cancelledInvoices: duplicateList
+        };
+    }
+
+    // -------------------------------------------------------------
+    // COMBINED INVOICE SUMMARY REPORT (AJIO & FLIPKART STYLE)
+    // -------------------------------------------------------------
+    function invNewGetFormattedDateTime(date = new Date()) {
+        const pad = (n) => String(n).padStart(2, '0');
+        const day = pad(date.getDate());
+        const month = pad(date.getMonth() + 1);
+        const year = date.getFullYear();
+        const hours = pad(date.getHours());
+        const minutes = pad(date.getMinutes());
+        const seconds = pad(date.getSeconds());
+        return `${day}-${month}-${year} ${hours}-${minutes}-${seconds}`;
+    }
+
+    function invNewGenerateCombinedSummaryFile(allPartyMetrics) {
+        if (!allPartyMetrics || allPartyMetrics.length === 0) return null;
+
+        const summaryWb = XLSX.utils.book_new();
+
+        // Sheet 1: "Invoice Summary" (party block list matching Ajio & Myntra)
+        const partySummaryRows = [];
+        for (let i = 0; i < allPartyMetrics.length; i++) {
+            const m = allPartyMetrics[i];
+            const pName = m.partyName || invNewGetPartyCodeName(m.partyCode);
+            partySummaryRows.push([pName]);
+            partySummaryRows.push([m.generatedRange || "-"]);
+            partySummaryRows.push([]); // blank separator
+        }
+        const wsSummary = XLSX.utils.aoa_to_sheet(partySummaryRows);
+        XLSX.utils.book_append_sheet(summaryWb, wsSummary, "Invoice Summary");
+
+        // Sheet 2: "Invoice Details" (tabular overview)
+        const detailedSummaryData = [
+            ["Party Code", "Party Name", "OD File", "DT File", "Total Sold", "Total Cancelled", "Invoice Range", "Date Range", "Duplicates Count", "Status"]
+        ];
+        for (const m of allPartyMetrics) {
+            detailedSummaryData.push([
+                m.partyCode,
+                m.partyName || invNewGetPartyCodeName(m.partyCode),
+                m.odName,
+                m.dtName,
+                m.soldCnt,
+                m.cancelCnt,
+                m.generatedRange,
+                m.dateRangeStr,
+                m.cancelledInvoices ? m.cancelledInvoices.length : 0,
+                "Success"
+            ]);
+        }
+        const wsDetailed = XLSX.utils.aoa_to_sheet(detailedSummaryData);
+        XLSX.utils.book_append_sheet(summaryWb, wsDetailed, "Invoice Details");
+
+        const summaryBuffer = XLSX.write(summaryWb, { bookType: 'xlsx', type: 'array' });
+        const summaryBlob = new Blob([summaryBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const summaryFilename = `flipkart invoice summary ${invNewGetFormattedDateTime()}.xlsx`;
+
+        const summaryObj = {
+            id: invNewNextId++,
+            name: summaryFilename,
+            path: summaryFilename,
+            ext: "xlsx",
+            originalFile: summaryBlob,
+            category: "Summary",
+            renamedName: summaryFilename,
+            partyCode: "__BATCH_ROOT__",
+            partyRange: "Summary",
+            parsedAOA: partySummaryRows
+        };
+        invNewFilesList.push(summaryObj);
+        invNewAddLog(`Generated single combined summary file: ${summaryFilename}`, "success");
+        return summaryObj;
+    }
+
+    // -------------------------------------------------------------
+    // PROCESS BUTTON CLICK LISTENER
+    // -------------------------------------------------------------
+    if (invNewBtnProcessAction) {
+        invNewBtnProcessAction.addEventListener('click', async () => {
+            if (invNewFilesList.length === 0) {
+                alert("Please upload DropShip and IndoPrimo files first.");
+                return;
+            }
+
+            let uniqueCodes = invNewGetUniquePartyCodes();
+            if (uniqueCodes.length === 0) {
+                const pCode = invNewGetPartyCode(invNewFilesList[0]) || "101";
+                uniqueCodes = [pCode];
+            }
+
+            invNewShowLoading("Running 2-File Excel Pipeline...", 5);
+            invNewClearLogs();
+            await new Promise(r => setTimeout(r, 50));
+
+            try {
+                if (uniqueCodes.length === 1) {
+                    // Single Party Mode
+                    const odId = parseInt(invNewSelectOdFile ? invNewSelectOdFile.value : "");
+                    const dtId = parseInt(invNewSelectDtFile ? invNewSelectDtFile.value : "");
+
+                    let dropShipObj, indoPrimoObj;
+                    const partyCode = uniqueCodes[0];
+
+                    if (odId && dtId) {
+                        dropShipObj = invNewFilesList.find(f => f.id === odId);
+                        indoPrimoObj = invNewFilesList.find(f => f.id === dtId);
+                    } else {
+                        dropShipObj = invNewFilesList.find(f => f.category === 'OD' || f.name.toLowerCase().includes('dropship') || f.name.toLowerCase().includes('seller_orders_report') || f.name.toLowerCase().includes('flipkart_merged_orders'));
+                        indoPrimoObj = invNewFilesList.find(f => f !== dropShipObj);
+                    }
+
+                    if (!dropShipObj || !indoPrimoObj) {
+                        alert("Missing required DropShip or IndoPrimo file.");
+                        invNewHideLoading();
+                        return;
+                    }
+
+                    // Clean previous run outputs
+                    invNewFilesList = invNewFilesList.filter(f => 
+                        !f.name.endsWith("-GST NOT APPLICABLE.xlsx") && !f.name.endsWith("-2 MORE INVOICE.xlsx") && !f.name.endsWith("-SUMMARY.xlsx") && !f.name.toLowerCase().includes("summary") && f.category !== "Combined" && f.category !== "Summary"
+                    );
+
+                    invNewUpdateProgress(20, "Loading DropShip and IndoPrimo sheet data...");
+                    await new Promise(r => setTimeout(r, 40));
+
+                    const metrics = await invNewProcessPartyPipeline2Files(dropShipObj, indoPrimoObj, partyCode, false);
+                    invNewGenerateCombinedSummaryFile([metrics]);
+                    invNewUpdateProgress(95, "Finalizing output workbooks...");
+                    await new Promise(r => setTimeout(r, 40));
+
+                    // Update UI Details Log Summary
+                    if (invNewLogTdFilename) invNewLogTdFilename.textContent = metrics.odName;
+                    if (invNewLogTdRange) invNewLogTdRange.textContent = metrics.generatedRange;
+                    if (invNewLogTdDates) invNewLogTdDates.textContent = metrics.dateRangeStr;
+                    if (invNewLogTdB2p2) invNewLogTdB2p2.textContent = metrics.b2p2String;
+                    if (invNewRangeValue) invNewRangeValue.textContent = metrics.generatedRange;
+
+                    if (invNewStatTotal) invNewStatTotal.textContent = metrics.soldCnt + metrics.cancelCnt;
+                    if (invNewStatOd) invNewStatOd.textContent = "1";
+                    if (invNewStatDt) invNewStatDt.textContent = "1";
+                    if (invNewStatDtSold) invNewStatDtSold.textContent = metrics.soldCnt;
+                    if (invNewStatDtCancelled) invNewStatDtCancelled.textContent = metrics.cancelCnt;
+                    if (invNewStatUnmatched) invNewStatUnmatched.textContent = (metrics.cancelledInvoices ? metrics.cancelledInvoices.length : 0);
+
+                    // Duplicate/Cancelled invoices list
+                    if (invNewCancelledInvoicesList) {
+                        invNewCancelledInvoicesList.innerHTML = '';
+                        if (metrics.cancelledInvoices && metrics.cancelledInvoices.length > 0) {
+                            metrics.cancelledInvoices.forEach(inv => {
+                                const badge = document.createElement('span');
+                                badge.className = 'cancelled-invoice-badge';
+                                badge.textContent = inv;
+                                badge.addEventListener('click', () => {
+                                    if (invNewSearchInput) {
+                                        invNewSearchInput.value = inv;
+                                        invNewRenderFilesTable();
+                                    }
+                                });
+                                invNewCancelledInvoicesList.appendChild(badge);
+                            });
+                        } else {
+                            invNewCancelledInvoicesList.innerHTML = '<span style="color: #94a3b8;">No duplicate invoices found.</span>';
+                        }
+                    }
+
+                    invNewIsProcessed = true;
+                    if (invNewDashboardControls) invNewDashboardControls.style.display = 'block';
+                    invNewRenderFilesTable();
+                    invNewHideLoading();
+                    invNewAddLog("Pipeline completed successfully! Ready for ZIP download.", "success");
+
+                } else {
+                    // Batch Mode
+                    invNewAddLog(`Batch Mode: Processing ${uniqueCodes.length} parties...`, "warning");
+
+                    invNewFilesList = invNewFilesList.filter(f => 
+                        !f.name.endsWith("-GST NOT APPLICABLE.xlsx") && !f.name.endsWith("-2 MORE INVOICE.xlsx") && !f.name.endsWith("-SUMMARY.xlsx") && !f.name.toLowerCase().includes("summary") && f.category !== "Combined" && f.category !== "Summary"
+                    );
+
+                    let totalSold = 0;
+                    let totalCancel = 0;
+                    const allCancelled = [];
+                    const allPartyMetrics = [];
+
+                    for (let pi = 0; pi < uniqueCodes.length; pi++) {
+                        const partyCode = uniqueCodes[pi];
+                        const groupFiles = invNewFilesList.filter(f => invNewGetPartyCode(f) === partyCode);
+
+                        const dropShipObj = groupFiles.find(f => f.category === 'OD' || f.name.toLowerCase().includes('dropship') || f.name.toLowerCase().includes('seller_orders_report') || f.name.toLowerCase().includes('flipkart_merged_orders'));
+                        const indoPrimoObj = groupFiles.find(f => f !== dropShipObj);
+
+                        if (!dropShipObj || !indoPrimoObj) {
+                            invNewAddLog(`[${partyCode}] Skipped: Missing DropShip or IndoPrimo file.`, "error");
+                            continue;
+                        }
+
+                        const pStart = Math.round(10 + (pi / uniqueCodes.length) * 80);
+                        invNewUpdateProgress(pStart, `Processing party ${partyCode} (${pi+1}/${uniqueCodes.length})...`);
+                        await new Promise(r => setTimeout(r, 30));
+
+                        try {
+                            const metrics = await invNewProcessPartyPipeline2Files(dropShipObj, indoPrimoObj, partyCode, true);
+                            allPartyMetrics.push(metrics);
+                            totalSold += metrics.soldCnt;
+                            totalCancel += metrics.cancelCnt;
+                            if (metrics.cancelledInvoices) allCancelled.push(...metrics.cancelledInvoices);
+                        } catch (err) {
+                            invNewAddLog(`[${partyCode}] Error: ${err.message}`, "error");
+                        }
+                    }
+
+                    if (allPartyMetrics.length > 0) {
+                        invNewGenerateCombinedSummaryFile(allPartyMetrics);
+
+                        // Populate Details Log Summary and Invoice Range for the Batch
+                        if (invNewLogTdFilename) invNewLogTdFilename.textContent = allPartyMetrics.map(m => m.odName).join(', ');
+                        if (invNewLogTdRange) invNewLogTdRange.textContent = allPartyMetrics.map(m => m.generatedRange).join(' | ');
+                        if (invNewLogTdDates) invNewLogTdDates.textContent = allPartyMetrics.map(m => m.dateRangeStr).filter(d => d && d !== '—').join(' | ') || '—';
+                        if (invNewLogTdB2p2) invNewLogTdB2p2.textContent = allPartyMetrics.map(m => m.b2p2String).filter(b => b && b !== '—').join(' | ') || '—';
+                        if (invNewRangeValue) invNewRangeValue.textContent = allPartyMetrics.map(m => `${m.partyName || m.partyCode}: ${m.generatedRange}`).join(' | ');
+                    }
+
+                    if (invNewStatTotal) invNewStatTotal.textContent = totalSold + totalCancel;
+                    if (invNewStatOd) invNewStatOd.textContent = uniqueCodes.length;
+                    if (invNewStatDt) invNewStatDt.textContent = uniqueCodes.length;
+                    if (invNewStatDtSold) invNewStatDtSold.textContent = totalSold;
+                    if (invNewStatDtCancelled) invNewStatDtCancelled.textContent = totalCancel;
+                    if (invNewStatUnmatched) invNewStatUnmatched.textContent = allCancelled.length;
+
+                    if (invNewCancelledInvoicesList) {
+                        invNewCancelledInvoicesList.innerHTML = '';
+                        if (allCancelled.length > 0) {
+                            allCancelled.forEach(inv => {
+                                const badge = document.createElement('span');
+                                badge.className = 'cancelled-invoice-badge';
+                                badge.textContent = inv;
+                                invNewCancelledInvoicesList.appendChild(badge);
+                            });
+                        } else {
+                            invNewCancelledInvoicesList.innerHTML = '<span style="color: #94a3b8;">No duplicate invoices found.</span>';
+                        }
+                    }
+
+                    invNewIsProcessed = true;
+                    if (invNewDashboardControls) invNewDashboardControls.style.display = 'block';
+                    invNewRenderFilesTable();
+                    invNewHideLoading();
+                    invNewAddLog(`Batch processing complete for ${uniqueCodes.length} parties. Ready for download.`, "success");
+                }
+            } catch (err) {
+                console.error(err);
+                invNewHideLoading();
+                alert("Pipeline execution error: " + err.message);
+                invNewAddLog("Error: " + err.message, "error");
+            }
+        });
+    }
+
+    // -------------------------------------------------------------
+    // DOWNLOAD ALL AS ZIP (Exact Myntra Nested Hierarchy)
+    // -------------------------------------------------------------
+    async function invNewDownloadAllAsZip() {
+        const outputFiles = invNewFilesList.filter(fileObj => {
+            const cat = fileObj.category;
+            const rName = fileObj.renamedName || fileObj.name || "";
+            return cat === "OD" || cat === "DT" || cat === "Combined" || cat === "Summary" ||
+                   rName.toLowerCase().includes("summary") ||
+                   rName === "2 MORE INVOICE.xlsx" ||
+                   rName.endsWith("-2 MORE INVOICE.xlsx") ||
+                   rName === "GST NOT APPLICABLE.xlsx" ||
+                   rName.endsWith("-GST NOT APPLICABLE.xlsx");
+        });
+
+        if (outputFiles.length === 0) {
+            alert("No processed files available to package into ZIP.");
+            return;
+        }
+
+        invNewShowLoading("Packaging processed files into ZIP...", 10);
+        const newZip = new JSZip();
+        const usedPaths = new Set();
+
+        try {
+            const processedParties = new Set();
+            outputFiles.forEach(f => {
+                if (f.partyCode && f.partyCode !== "__BATCH_ROOT__") processedParties.add(f.partyCode);
+            });
+            const partyCodesArray = Array.from(processedParties).sort((a, b) => {
+                const numA = parseInt(a, 10);
+                const numB = parseInt(b, 10);
+                if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+            });
+
+            // Set ZIP Name (e.g. "101_Arranged.zip" or "101-509_Arranged.zip")
+            let zipName = "";
+            if (partyCodesArray.length === 1) {
+                zipName = `${partyCodesArray[0]}_Arranged.zip`;
+            } else if (partyCodesArray.length > 1) {
+                zipName = `${partyCodesArray[0]}-${partyCodesArray[partyCodesArray.length - 1]}_Arranged.zip`;
+            } else if (invNewUploadedZipBaseName && !invNewUploadedZipBaseName.includes("bundle") && !invNewUploadedZipBaseName.includes("flipkart_data_arrange")) {
+                const cleanBase = invNewUploadedZipBaseName.replace(/[-_]?(?:processed|arranged)$/i, '');
+                zipName = `${cleanBase}_Arranged.zip`;
+            } else {
+                zipName = "flipkart_Arranged.zip";
+            }
+
+            const toggleStructEl = document.getElementById('invNewToggleStructure');
+            const keepStructure = toggleStructEl ? toggleStructEl.checked : true;
+
+            for (let i = 0; i < outputFiles.length; i++) {
+                const zipProgress = 10 + Math.round((i / outputFiles.length) * 70);
+                invNewUpdateProgress(zipProgress, `Adding file ${i + 1}/${outputFiles.length} to ZIP...`);
+                const fileObj = outputFiles[i];
+
+                let partyCode = fileObj.partyCode || invNewGetPartyCode(fileObj);
+                if (!partyCode || partyCode === "PartyCode") {
+                    partyCode = partyCodesArray[0] || "Processed";
+                }
+
+                let partyRange = fileObj.partyRange;
+                if (!partyRange) {
+                    const sibling = outputFiles.find(f => f.partyCode === partyCode && f.partyRange);
+                    if (sibling) {
+                        partyRange = sibling.partyRange;
+                    }
+                }
+
+                const hasRange = (partyRange && partyRange !== "—" && partyRange !== "RangeNotFound");
+                const baseFolder = partyCode;
+                const subFolder = hasRange ? `${partyCode}-(${partyRange})` : `${partyCode}-(Processed)`;
+
+                const filename = fileObj.renamedName || fileObj.name;
+                const lastDot = filename.lastIndexOf('.');
+                const baseName = lastDot !== -1 ? filename.substring(0, lastDot) : filename;
+                const extension = lastDot !== -1 ? filename.substring(lastDot) : "";
+
+                const isSummary = filename.toLowerCase().includes("summary");
+
+                let targetPath = "";
+                if (keepStructure) {
+                    if (isSummary || fileObj.partyCode === "__BATCH_ROOT__") {
+                        // Single Master Summary sits directly at the root of the ZIP (e.g. "flipkart invoice summary 12-09-2026 12-06-38.xlsx")
+                        targetPath = filename;
+                    } else {
+                        // DT, OD, 2 MORE INVOICE, GST NOT APPLICABLE sit inside party subFolder:
+                        // e.g. "101/101-(FK27S101-374-456)/101-(FK27S101-374-456)-DT.xlsx"
+                        let cleanName = filename;
+                        if (filename.includes("2 MORE INVOICE")) {
+                            cleanName = "2 MORE INVOICE.xlsx";
+                        } else if (filename.includes("GST NOT APPLICABLE")) {
+                            cleanName = "GST NOT APPLICABLE.xlsx";
+                        }
+                        targetPath = `${baseFolder}/${subFolder}/${cleanName}`;
+                    }
+                } else {
+                    targetPath = filename;
+                }
+
+                let counter = 1;
+                while (usedPaths.has(targetPath.toLowerCase())) {
+                    if (keepStructure) {
+                        if (isSummary || fileObj.partyCode === "__BATCH_ROOT__") {
+                            targetPath = `${baseName} (${counter})${extension}`;
+                        } else {
+                            targetPath = `${baseFolder}/${subFolder}/${baseName} (${counter})${extension}`;
+                        }
+                    } else {
+                        targetPath = `${baseName} (${counter})${extension}`;
+                    }
+                    counter++;
+                }
+
+                usedPaths.add(targetPath.toLowerCase());
+                newZip.file(targetPath, fileObj.originalFile);
+            }
+
+            invNewUpdateProgress(85, "Generating ZIP download package...");
+            const content = await newZip.generateAsync({ type: "blob" });
+
+            const url = URL.createObjectURL(content);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = zipName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+            invNewHideLoading();
+            invNewAddLog(`Downloaded ZIP package: ${zipName}`, "success");
+        } catch (error) {
+            console.error(error);
+            invNewHideLoading();
+            alert("Failed to create ZIP: " + error.message);
+        }
+    }
+
+    if (invNewBtnDownloadZip) {
+        invNewBtnDownloadZip.addEventListener('click', invNewDownloadAllAsZip);
+    }
+
+    // -------------------------------------------------------------
+    // CLIPBOARD COPY HELPERS
+    // -------------------------------------------------------------
+    function invNewCopyToClipboard(text, successMsg) {
+        if (!text || text === "—") {
+            alert("No data available to copy.");
+            return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(() => {
+                alert(successMsg);
+            }).catch(() => {
+                invNewFallbackCopy(text, successMsg);
+            });
+        } else {
+            invNewFallbackCopy(text, successMsg);
+        }
+    }
+
+    function invNewFallbackCopy(text, successMsg) {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        alert(successMsg);
+    }
+
+    if (invNewBtnCopyLog) {
+        invNewBtnCopyLog.addEventListener('click', () => {
+            const fName = invNewLogTdFilename ? invNewLogTdFilename.textContent : "";
+            const range = invNewLogTdRange ? invNewLogTdRange.textContent : "";
+            const dates = invNewLogTdDates ? invNewLogTdDates.textContent : "";
+            const b2p2 = invNewLogTdB2p2 ? invNewLogTdB2p2.textContent : "";
+            const rowStr = [fName, range, dates, b2p2].join('\t');
+            invNewCopyToClipboard(rowStr, "Details log row copied! Paste directly into Excel.");
+        });
+    }
+
+    if (invNewBtnCopyRange) {
+        invNewBtnCopyRange.addEventListener('click', () => {
+            const range = invNewRangeValue ? invNewRangeValue.textContent : "";
+            invNewCopyToClipboard(range, "Invoice range copied to clipboard!");
+        });
+    }
+
+    if (invNewBtnCopyCancelled) {
+        invNewBtnCopyCancelled.addEventListener('click', () => {
+            if (!invNewCancelledInvoicesList) return;
+            const badges = invNewCancelledInvoicesList.querySelectorAll('.cancelled-invoice-badge');
+            const list = Array.from(badges).map(b => b.textContent.trim());
+            invNewCopyToClipboard(list.join(', '), "Cancelled/Duplicate invoices copied!");
+        });
+    }
+
+    // -------------------------------------------------------------
+    // RESET & DROPZONE EVENT LISTENERS
+    // -------------------------------------------------------------
+    function invNewResetAll() {
+        invNewFilesList = [];
+        invNewNextId = 1;
+        invNewUploadedZipBaseName = "";
+        invNewIsProcessed = false;
+        if (invNewFileInput) invNewFileInput.value = '';
+        if (invNewFolderInput) invNewFolderInput.value = '';
+        if (invNewEmptyState) invNewEmptyState.style.display = 'block';
+        if (invNewTableContainer) invNewTableContainer.style.display = 'none';
+        if (invNewMappingCard) invNewMappingCard.style.display = 'none';
+        if (invNewDashboardControls) invNewDashboardControls.style.display = 'none';
+        if (invNewFilesTbody) invNewFilesTbody.innerHTML = '';
+        if (invNewLogTdFilename) invNewLogTdFilename.textContent = '—';
+        if (invNewLogTdRange) invNewLogTdRange.textContent = '—';
+        if (invNewLogTdDates) invNewLogTdDates.textContent = '—';
+        if (invNewLogTdB2p2) invNewLogTdB2p2.textContent = '—';
+        if (invNewRangeValue) invNewRangeValue.textContent = '—';
+        if (invNewCancelledInvoicesList) invNewCancelledInvoicesList.innerHTML = '<span style="color: #94a3b8;">None logged yet...</span>';
+        invNewClearLogs();
+    }
+
+    if (btnInvNewReset) btnInvNewReset.addEventListener('click', invNewResetAll);
+    if (invNewBtnClear) invNewBtnClear.addEventListener('click', invNewResetAll);
+
+    if (invNewSelectFilesBtn && invNewFileInput) {
+        invNewSelectFilesBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            invNewFileInput.click();
+        });
+    }
+
+    if (invNewSelectFolderBtn && invNewFolderInput) {
+        invNewSelectFolderBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            invNewFolderInput.click();
+        });
+    }
+
+    if (invNewDropzone) {
+        invNewDropzone.addEventListener('click', () => {
+            if (invNewFileInput) invNewFileInput.click();
+        });
+
+        ['dragenter', 'dragover'].forEach(evt => {
+            invNewDropzone.addEventListener(evt, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                invNewDropzone.classList.add('dragover');
+            });
+        });
+
+        ['dragleave', 'drop'].forEach(evt => {
+            invNewDropzone.addEventListener(evt, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                invNewDropzone.classList.remove('dragover');
+            });
+        });
+
+        invNewDropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                invNewHandleDroppedFiles(Array.from(e.dataTransfer.files));
+            }
+        });
+    }
+
+    if (invNewFileInput) {
+        invNewFileInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                invNewHandleDroppedFiles(Array.from(e.target.files));
+            }
+        });
+    }
+
+    if (invNewFolderInput) {
+        invNewFolderInput.addEventListener('change', (e) => {
+            if (e.target.files && e.target.files.length > 0) {
+                invNewHandleDroppedFiles(Array.from(e.target.files));
+            }
+        });
+    }
+
+    if (invNewSearchInput) {
+        invNewSearchInput.addEventListener('input', invNewRenderFilesTable);
+    }
+
 
     // ====================================================
     // TAB 5: INVOICE ARRANGE LOGIC
@@ -4293,6 +7303,12 @@ document.addEventListener('DOMContentLoaded', () => {
             const resp = await fetch('/api/parties');
             const data = await resp.json();
             if (resp.status !== 200) throw new Error(data.error || 'Server error fetching parties.');
+
+            // Cache party list in memory & localStorage
+            window.flipkartPartyList = data;
+            try {
+                localStorage.setItem('flipkart_parties_cache', JSON.stringify(data));
+            } catch (e) {}
 
             partiesTableBody.innerHTML = '';
             if (data.length === 0) {

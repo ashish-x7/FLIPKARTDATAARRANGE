@@ -1642,7 +1642,13 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
         'RAJASTHAN': 'RJ', 'SIKKIM': 'SK', 'TAMIL NADU': 'TN', 'TELANGANA': 'TS',
         'TRIPURA': 'TR', 'UTTAR PRADESH': 'UP', 'UTTARAKHAND': 'UK', 'UTTARANCHAL': 'UK',
         'WEST BENGAL': 'WB', 'ANDAMAN AND NICOBAR ISLANDS': 'AN', 'CHANDIGARH': 'CH',
-        'DADRA AND NAGAR HAVELI': 'DN', 'DAMAN AND DIU': 'DD', 'DELHI': 'DL',
+        'DADRA AND NAGAR HAVELI': 'DN', 'DADRA & NAGAR HAVELI': 'DN',
+        'DAMAN AND DIU': 'DN', 'DAMAN & DIU': 'DN',
+        'DADRA AND NAGAR HAVELI AND DAMAN AND DIU': 'DN',
+        'DADRA & NAGAR HAVELI AND DAMAN & DIU': 'DN',
+        'DADRA & NAGAR HAVELI & DAMAN & DIU': 'DN',
+        'DADRA AND NAGAR HAVELI & DAMAN AND DIU': 'DN',
+        'DELHI': 'DL',
         'JAMMU AND KASHMIR': 'JK', 'JAMMU & KASHMIR': 'JK', 'LAKSHADWEEP': 'LD',
         'PUDUCHERRY': 'PY', 'PONDICHERRY': 'PY', 'LADAKH': 'LA'
     }
@@ -1689,6 +1695,8 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
                 state_code_formatted = STATE_TO_CODE[state_str]
             elif state_clean in STATE_TO_CODE:
                 state_code_formatted = STATE_TO_CODE[state_clean]
+            elif 'DADRA' in state_clean or 'DAMAN' in state_clean:
+                state_code_formatted = 'DN'
             else:
                 state_code_formatted = state_raw
 

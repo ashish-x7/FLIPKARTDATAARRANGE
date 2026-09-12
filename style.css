@@ -1843,3 +1843,149 @@ footer {
 
 
 
+
+
+/* =======================================================
+   2-FILE INVOICE PROCESSOR (NEW LOGIC) STYLES
+   ======================================================= */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.75rem;
+}
+.stat-box {
+    padding: 0.85rem;
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    transition: all 0.2s ease;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+.stat-box:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+.stat-label {
+    font-size: 0.68rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+}
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+.border-od { border-left: 3px solid #2563eb !important; }
+.border-dt { border-left: 3px solid #059669 !important; }
+.border-unmatched { border-left: 3px solid #f59e0b !important; }
+.text-od { color: #2563eb; }
+.text-dt { color: #059669; }
+.text-unmatched { color: #f59e0b; }
+.select-field {
+    width: 100%;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    padding: 0.5rem 0.7rem;
+    border-radius: 8px;
+    color: #1e293b;
+    font-size: 0.82rem;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.select-field:focus {
+    outline: none;
+    border-color: #6366f1;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.select-field option {
+    background: #ffffff;
+    color: #1e293b;
+}
+.inline-progress {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(37, 99, 235, 0.06) 100%);
+    border: 1px solid rgba(99, 102, 241, 0.2);
+    border-radius: 12px;
+    padding: 0.85rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    box-shadow: 0 2px 12px rgba(99, 102, 241, 0.08);
+}
+.inline-progress-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+.progress-bar-wrapper {
+    width: 100%;
+    height: 10px;
+    background: rgba(99, 102, 241, 0.1);
+    border-radius: 20px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid rgba(99, 102, 241, 0.1);
+}
+.progress-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #6366f1, #818cf8, #3b82f6);
+    border-radius: 20px;
+    transition: width 0.3s ease;
+}
+.progress-percent {
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: #4f46e5;
+    min-width: 48px;
+}
+.progress-status {
+    font-size: 0.8rem;
+    color: #475569;
+}
+.cancelled-invoice-badge {
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    color: #dc2626;
+    padding: 0.15rem 0.45rem;
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    display: inline-block;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.cancelled-invoice-badge:hover {
+    background: #fecaca;
+    border-color: #f87171;
+}
+.preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+    font-size: 0.82rem;
+}
+.preview-table th {
+    background: #f8fafc;
+    padding: 0.7rem 1rem;
+    font-weight: 600;
+    color: #475569;
+    border-bottom: 1px solid #e2e8f0;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+.preview-table td {
+    padding: 0.65rem 1rem;
+    border-bottom: 1px solid #f1f5f9;
+    vertical-align: middle;
+}
+.preview-table tbody tr:hover {
+    background: #f8fafc;
+}
+.hidden-input {
+    display: none !important;
+}
