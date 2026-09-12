@@ -7449,6 +7449,52 @@ document.addEventListener('DOMContentLoaded', () => {
     const errorResultCard = document.getElementById('errorResultCard');
     const errorDownloadBtn = document.getElementById('errorDownloadBtn');
     const errorFromDate = document.getElementById('errorFromDate');
+    const errorDateRangesContainer = document.getElementById('errorDateRangesContainer');
+    const errorAddDateRangeBtn = document.getElementById('errorAddDateRangeBtn');
+
+    if (errorAddDateRangeBtn && errorDateRangesContainer) {
+        errorAddDateRangeBtn.addEventListener('click', () => {
+            const row = document.createElement('div');
+            row.className = 'date-range-row';
+            row.style.display = 'flex';
+            row.style.gap = '12px';
+            row.style.alignItems = 'flex-end';
+            row.innerHTML = `
+                <div style="flex: 1;">
+                    <label style="display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">From Date</label>
+                    <input type="date" class="date-input error-from-date" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                </div>
+                <div style="flex: 1;">
+                    <label style="display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">To Date</label>
+                    <input type="date" class="date-input error-to-date" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                </div>
+                <button type="button" class="btn btn-danger remove-date-range-btn" title="Remove Date Range" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 6px; flex-shrink: 0; cursor: pointer;">
+                    <i class="fa-solid fa-trash-can"></i>
+                </button>
+            `;
+            row.querySelector('.remove-date-range-btn').addEventListener('click', () => row.remove());
+            errorDateRangesContainer.appendChild(row);
+        });
+    }
+
+    function getFlipkartActiveDateRanges() {
+        const ranges = [];
+        const rows = document.querySelectorAll('#errorDateRangesContainer .date-range-row');
+        rows.forEach(r => {
+            const fromInp = r.querySelector('.error-from-date');
+            const toInp = r.querySelector('.error-to-date');
+            const fVal = fromInp ? fromInp.value : '';
+            const tVal = toInp ? toInp.value : '';
+            if (fVal || tVal) {
+                const f = fVal ? new Date(fVal) : null;
+                const t = tVal ? new Date(tVal) : null;
+                if (f) f.setHours(0, 0, 0, 0);
+                if (t) t.setHours(23, 59, 59, 999);
+                ranges.push({ from: f, to: t, fromStr: fVal, toStr: tVal });
+            }
+        });
+        return ranges;
+    }
     const errorToDate = document.getElementById('errorToDate');
 
     let errorFiles = [];
@@ -7540,6 +7586,19 @@ document.addEventListener('DOMContentLoaded', () => {
         errorClearBtn.addEventListener('click', () => {
             errorFiles = [];
             errorFromDate.value = '';
+            if (errorDateRangesContainer) {
+                const rows = errorDateRangesContainer.querySelectorAll('.date-range-row');
+                rows.forEach((r, idx) => {
+                    if (idx === 0) {
+                        const f = r.querySelector('.error-from-date');
+                        const t = r.querySelector('.error-to-date');
+                        if (f) f.value = '';
+                        if (t) t.value = '';
+                    } else {
+                        r.remove();
+                    }
+                });
+            }
             errorToDate.value = '';
             updateErrorUI();
         });
@@ -7735,14 +7794,11 @@ document.addEventListener('DOMContentLoaded', () => {
             showLoader('Processing Flipkart Error Data Client-Side... Please wait.');
 
             try {
-                const fromDateStr = errorFromDate.value;
-                const toDateStr = errorToDate.value;
-
-                const fromDate = fromDateStr ? new Date(fromDateStr) : null;
-                const toDate = toDateStr ? new Date(toDateStr) : null;
-
-                if (fromDate) fromDate.setHours(0, 0, 0, 0);
-                if (toDate) toDate.setHours(23, 59, 59, 999);
+                const activeDateRanges = getFlipkartActiveDateRanges();
+                if (activeDateRanges.length > 0) {
+                    const rangeLogs = activeDateRanges.map(r => `[${r.fromStr || 'Start'} to ${r.toStr || 'End'}]`).join(', ');
+                    console.log(`[Flipkart Error] Active exclusion ranges (${activeDateRanges.length}): ${rangeLogs}`);
+                }
 
                 // Read files client-side
                 const detailsAOA = await readExcelAsAOA(detailsFile);
@@ -7802,15 +7858,21 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                     row[22] = cellValC;
 
-                    // Date filter check
-                    if (fromDate || toDate) {
+                    // Multi-Date Range filter check (Exclude if matching ANY active range)
+                    if (activeDateRanges.length > 0) {
                         const cellDate = parseCellAsDate(cellValC);
                         if (cellDate) {
-                            let inRange = true;
-                            if (fromDate && cellDate < fromDate) inRange = false;
-                            if (toDate && cellDate > toDate) inRange = false;
-
-                            if (inRange) {
+                            const time = cellDate.getTime();
+                            let shouldDeleteByDate = false;
+                            for (const rng of activeDateRanges) {
+                                const satisfiesFrom = rng.from ? time >= rng.from.getTime() : true;
+                                const satisfiesTo = rng.to ? time <= rng.to.getTime() : true;
+                                if (satisfiesFrom && satisfiesTo) {
+                                    shouldDeleteByDate = true;
+                                    break;
+                                }
+                            }
+                            if (shouldDeleteByDate) {
                                 dateFilteredCount++;
                                 continue;
                             }

@@ -1295,15 +1295,29 @@
                         <h2>Flipkart Error Logic</h2>
                     </div>
                     <div class="card-body" style="padding: 20px;">
-                        <!-- Date Filter Selection -->
-                        <div class="date-filter-container" style="display: flex; gap: 15px; margin-bottom: 20px;">
-                            <div style="flex: 1;">
-                                <label style="display: block; font-weight: 500; margin-bottom: 5px;">From Date</label>
-                                <input type="date" id="errorFromDate" class="date-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                        <!-- Date Filter Selection with Multi-Range Support -->
+                        <div class="card" style="margin-top: 0; margin-bottom: 20px; padding: 16px; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <i class="fa-solid fa-calendar-days" style="color: var(--primary);"></i>
+                                    <strong style="font-size: 0.95rem; color: var(--text-primary);">Sale Date Ranges (Orders in these ranges will be excluded)</strong>
+                                </div>
+                                <button type="button" class="btn btn-secondary" id="errorAddDateRangeBtn" style="padding: 6px 14px; font-size: 0.8rem; cursor: pointer;">
+                                    <i class="fa-solid fa-plus"></i> Add Date Range
+                                </button>
                             </div>
-                            <div style="flex: 1;">
-                                <label style="display: block; font-weight: 500; margin-bottom: 5px;">To Date</label>
-                                <input type="date" id="errorToDate" class="date-input" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-secondary); color: var(--text-primary);">
+                            <div id="errorDateRangesContainer" style="display: flex; flex-direction: column; gap: 10px;">
+                                <div class="date-range-row" style="display: flex; gap: 12px; align-items: flex-end;">
+                                    <div style="flex: 1;">
+                                        <label style="display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">From Date</label>
+                                        <input type="date" class="date-input error-from-date" id="errorFromDate" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <label style="display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 4px; color: var(--text-secondary);">To Date</label>
+                                        <input type="date" class="date-input error-to-date" id="errorToDate" style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary);">
+                                    </div>
+                                    <div style="width: 36px; height: 36px;"></div>
+                                </div>
                             </div>
                         </div>
 
