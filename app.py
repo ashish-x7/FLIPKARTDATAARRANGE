@@ -1492,14 +1492,17 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     od_new_name = f"{file_prefix}-({invoice_prefix}-{suffix_range})-OD.xlsx"
     pr_new_name = f"{file_prefix}-({invoice_prefix}-{suffix_range})-PR.xlsx"
 
-    # Step C: Collect clean suborder numbers
+    # Step C: Collect clean suborder numbers and promotion discount from DT
     suborders_in_dt = set()
+    dt_promo_map = {}
     for row in surviving_dt_rows:
         val = row[4] if len(row) > 4 else None
         if val is not None:
             val_clean = clean_order_item_id(val)
             if val_clean:
                 suborders_in_dt.add(val_clean)
+                promo_val = row[53] if len(row) > 53 and row[53] is not None else ""
+                dt_promo_map[val_clean] = promo_val
 
     # Load OD file
     wb_od = load_file_to_openpyxl_workbook(od_bytes, od_filename)
@@ -1512,6 +1515,21 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
     ws_matched_od.title = "Matched Orders"
 
     headers_od = [cell.value for cell in ws_od[1]]
+    while len(headers_od) < 19:
+        headers_od.append("")
+
+    # Identify status column if present in original headers
+    status_col_idx = None
+    for idx, h in enumerate(headers_od):
+        if h and 'status' in str(h).strip().lower():
+            status_col_idx = idx
+            break
+
+    # Column Q (1-based 17 / index 16): Promotion Discount(Excluding Tax)
+    headers_od[16] = "Promotion Discount(Excluding Tax)"
+    # Column S (1-based 19 / index 18): Status
+    headers_od[18] = "Status"
+
     ws_matched_od.append(headers_od)
 
     matched_od_count = 0
@@ -1528,7 +1546,35 @@ def process_single_party(od_bytes, od_filename, dt_bytes, dt_filename, details_b
             if clean_item_id in suborders_in_dt:
                 matched_od_count += 1
                 row_vals = [cell.value for cell in ws_od[r]]
+                while len(row_vals) < 19:
+                    row_vals.append("")
+
+                # Extract status value: from Column Q (index 16) or detected status column
+                if len(row_vals) > 16 and row_vals[16]:
+                    status_val = row_vals[16]
+                elif status_col_idx is not None and status_col_idx < len(row_vals) and row_vals[status_col_idx]:
+                    status_val = row_vals[status_col_idx]
+                else:
+                    status_val = ""
+
+                # 1. Column A (index 0): prepend ` to data
+                val_a = str(row_vals[0] or "").strip()
+                if val_a:
+                    if not val_a.startswith('`'):
+                        val_a = f"`{val_a}"
+                    row_vals[0] = val_a
+
+                # 2. Column Q (index 16): Promotion Discount(Excluding Tax) from DT Column BB
+                row_vals[16] = dt_promo_map.get(clean_item_id, "")
+
+                # 3. Column S (index 18): Status
+                row_vals[18] = status_val
+
                 ws_matched_od.append(row_vals)
+                curr_r = ws_matched_od.max_row
+                cell_a = ws_matched_od.cell(row=curr_r, column=1)
+                cell_a.number_format = '@'
+
                 for col in range(1, ws_od.max_column + 1):
                     ws_od.cell(row=r, column=col).fill = yellow_fill
 

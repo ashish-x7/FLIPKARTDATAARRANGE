@@ -1532,6 +1532,9 @@
                     <span class="full-view-count-badge" id="fullViewCountBadge">0 Files</span>
                 </div>
                 <div class="full-view-actions">
+                    <button type="button" class="btn btn-danger" id="renameDeleteSelectedBtn" style="display: none; padding: 8px 16px; font-size: 0.85rem; border-radius: 8px; font-weight: 700; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-trash-can"></i> Delete Selected (<span id="renameSelectedCount">0</span>)
+                    </button>
                     <button type="button" class="btn btn-download" id="fullViewDownloadBtn" style="padding: 8px 16px; font-size: 0.85rem;">
                         <i class="fa-solid fa-file-zipper"></i> Download ZIP
                     </button>
@@ -1560,6 +1563,9 @@
                 <table class="full-view-table">
                     <thead>
                         <tr>
+                            <th style="width: 40px; text-align: center;">
+                                <input type="checkbox" id="renameSelectAllCheckbox" title="Select All" style="cursor: pointer; width: 16px; height: 16px;">
+                            </th>
                             <th style="width: 50px; text-align: center;">#</th>
                             <th>Original Filename</th>
                             <th class="col-highlight">Renamed Filename</th>
@@ -1644,6 +1650,9 @@
                     <span class="full-view-count-badge" id="splitFullViewCountBadge">0 Files</span>
                 </div>
                 <div class="full-view-actions">
+                    <button type="button" class="btn btn-danger" id="splitDeleteSelectedBtn" style="display: none; padding: 8px 16px; font-size: 0.85rem; border-radius: 8px; font-weight: 700; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-trash-can"></i> Delete Selected (<span id="splitSelectedCount">0</span>)
+                    </button>
                     <button type="button" class="btn btn-download" id="splitFullViewDownloadBtn" style="padding: 8px 16px; font-size: 0.85rem;">
                         <i class="fa-solid fa-file-zipper"></i> Download ZIP
                     </button>
@@ -1676,6 +1685,9 @@
                 <table class="full-view-table">
                     <thead>
                         <tr>
+                            <th style="width: 40px; text-align: center;">
+                                <input type="checkbox" id="splitSelectAllCheckbox" title="Select All" style="cursor: pointer; width: 16px; height: 16px;">
+                            </th>
                             <th style="width: 50px; text-align: center;">#</th>
                             <th class="col-highlight">File Name</th>
                             <th>Unique Key / Warehouse</th>
@@ -1823,7 +1835,7 @@
     </div>
 
     <!-- Custom JavaScript -->
-    <script src="/static/js/app.js?v=19.4"></script>
+    <script src="/static/js/app.js?v=19.5"></script>
     <!-- ==================================================== -->
     <!-- EDIT GROUP KEY MODAL (GROUP MERGE)                  -->
     <!-- ==================================================== -->
@@ -1867,6 +1879,9 @@
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 10px;">
+                    <button type="button" class="btn btn-danger" id="gmrgDeleteSelectedBtn" style="display: none; padding: 7px 14px; font-size: 0.85rem; border-radius: 8px; font-weight: 700; align-items: center; gap: 6px;">
+                        <i class="fa-solid fa-trash-can"></i> Delete Selected (<span id="gmrgSelectedCount">0</span>)
+                    </button>
                     <button type="button" class="btn btn-danger" id="btnCloseGmrgFullview" style="padding: 7px 14px; font-size: 0.85rem; border-radius: 8px;">
                         <i class="fa-solid fa-xmark"></i> Close
                     </button>
@@ -1881,6 +1896,9 @@
                     <table class="preview-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
                         <thead style="position: sticky; top: 0; background: #f8fafc; z-index: 2; border-bottom: 2px solid #e2e8f0;">
                             <tr>
+                                <th style="width: 40px; text-align: center; padding: 10px 8px;">
+                                    <input type="checkbox" id="gmrgSelectAllCheckbox" title="Select All Groups" style="cursor: pointer; width: 16px; height: 16px;">
+                                </th>
                                 <th style="width: 45px; padding: 10px 12px;">#</th>
                                 <th style="width: 110px; padding: 10px 12px;">Group Key</th>
                                 <th style="padding: 10px 12px;">Source Files</th>

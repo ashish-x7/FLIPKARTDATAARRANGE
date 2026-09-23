@@ -790,6 +790,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCloseGmrgFullview = document.getElementById('btnCloseGmrgFullview');
     const gmrgFullViewSearch = document.getElementById('gmrgFullViewSearch');
     const tbodyGmrgFullView = document.getElementById('tbodyGmrgFullView');
+    const gmrgDeleteSelectedBtn = document.getElementById('gmrgDeleteSelectedBtn');
+    const gmrgSelectedCount = document.getElementById('gmrgSelectedCount');
+    const gmrgSelectAllCheckbox = document.getElementById('gmrgSelectAllCheckbox');
+    let selectedGmrgGroupKeys = new Set();
 
     let gmrgUploadedFiles = [];
     let gmrgGroupsMap = new Map();
@@ -1168,15 +1172,61 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Full View Modal for Grouped Merge
+    // Full View Modal for Grouped Merge
     function openGmrgFullViewModal() {
         if (!gmrgFullViewModal) return;
+        selectedGmrgGroupKeys.clear();
         if (gmrgFullViewSearch) gmrgFullViewSearch.value = '';
         renderGmrgFullViewRows();
+        updateGmrgSelectAllState();
         gmrgFullViewModal.style.display = 'flex';
     }
 
     function closeGmrgFullViewModal() {
         if (gmrgFullViewModal) gmrgFullViewModal.style.display = 'none';
+    }
+
+    function updateGmrgSelectAllState() {
+        if (!tbodyGmrgFullView) return;
+        const checkboxes = tbodyGmrgFullView.querySelectorAll('.gmrg-group-checkbox');
+        const count = selectedGmrgGroupKeys.size;
+        if (gmrgSelectedCount) gmrgSelectedCount.textContent = count;
+        if (gmrgDeleteSelectedBtn) {
+            gmrgDeleteSelectedBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        if (gmrgSelectAllCheckbox) {
+            if (checkboxes.length === 0) {
+                gmrgSelectAllCheckbox.checked = false;
+                gmrgSelectAllCheckbox.indeterminate = false;
+            } else {
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+                gmrgSelectAllCheckbox.checked = allChecked;
+                gmrgSelectAllCheckbox.indeterminate = !allChecked && someChecked;
+            }
+        }
+    }
+
+    function deleteSelectedGmrgGroups() {
+        const count = selectedGmrgGroupKeys.size;
+        if (count === 0) return;
+
+        showCustomConfirm(
+            'Delete Selected Groups',
+            `Are you sure you want to remove ${count} selected group(s)? All files in these groups will be removed.`,
+            (confirmed) => {
+                if (confirmed) {
+                    gmrgUploadedFiles = gmrgUploadedFiles.filter(f => !selectedGmrgGroupKeys.has(f.groupKey));
+                    selectedGmrgGroupKeys.clear();
+                    recalculateGmrgGroups();
+                    resetGmrgButtonState();
+                    renderGmrgPreview();
+                    renderGmrgFullViewRows();
+                    updateGmrgSelectAllState();
+                    showCustomAlert('Groups Removed', `${count} selected group(s) have been removed.`, 'info');
+                }
+            }
+        );
     }
 
     function renderGmrgFullViewRows() {
@@ -1199,7 +1249,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (groups.length === 0) {
-            tbodyGmrgFullView.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 30px;">No matching groups found.</td></tr>';
+            tbodyGmrgFullView.innerHTML = '<tr><td colspan="6" style="text-align: center; color: #94a3b8; padding: 30px;">No matching groups found.</td></tr>';
+            updateGmrgSelectAllState();
             return;
         }
 
@@ -1208,12 +1259,16 @@ document.addEventListener('DOMContentLoaded', () => {
             const sourceNames = filesInGroup.map(f => f.name).join(', ');
             const outputFilename = `${key}-DropShipOrderReports-FLIPKART-${key}.xlsx`;
             const color = groupColorPalette[idx % groupColorPalette.length];
+            const isChecked = selectedGmrgGroupKeys.has(key);
 
             const tr = document.createElement('tr');
             tr.style.borderBottom = '1px solid #f1f5f9';
             tr.style.background = idx % 2 === 0 ? '#ffffff' : '#fcfcfd';
 
             tr.innerHTML = `
+                <td style="padding: 10px 8px; text-align: center;">
+                    <input type="checkbox" class="gmrg-group-checkbox" data-key="${key}" ${isChecked ? 'checked' : ''} style="cursor: pointer; width: 16px; height: 16px;">
+                </td>
                 <td style="padding: 10px 12px; font-weight: 700; color: #64748b;">${idx + 1}</td>
                 <td style="padding: 10px 12px;">
                     <span style="display: inline-block; padding: 3px 10px; border-radius: 999px; font-weight: 700; font-size: 0.8rem; background: ${color.bg}; border: 1px solid ${color.border}; color: ${color.text}; font-family: monospace;">
@@ -1250,6 +1305,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 </td>
             `;
 
+            const chk = tr.querySelector('.gmrg-group-checkbox');
+            if (chk) {
+                chk.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedGmrgGroupKeys.add(key);
+                    } else {
+                        selectedGmrgGroupKeys.delete(key);
+                    }
+                    updateGmrgSelectAllState();
+                });
+            }
+
             const btnInspect = tr.querySelector('.btn-inspect-gmrg-fv');
             if (btnInspect) {
                 btnInspect.addEventListener('click', () => {
@@ -1269,7 +1336,11 @@ document.addEventListener('DOMContentLoaded', () => {
                         'Delete Group',
                         `Are you sure you want to remove group "${key}" (${filesInGroup.length} files)?`,
                         (confirmed) => {
-                            if (confirmed) removeGmrgGroup(key);
+                            if (confirmed) {
+                                removeGmrgGroup(key);
+                                selectedGmrgGroupKeys.delete(key);
+                                updateGmrgSelectAllState();
+                            }
                         }
                     );
                 });
@@ -1277,11 +1348,29 @@ document.addEventListener('DOMContentLoaded', () => {
 
             tbodyGmrgFullView.appendChild(tr);
         });
+
+        updateGmrgSelectAllState();
     }
 
     if (btnGmrgFullview) btnGmrgFullview.addEventListener('click', openGmrgFullViewModal);
     if (btnCloseGmrgFullview) btnCloseGmrgFullview.addEventListener('click', closeGmrgFullViewModal);
     if (gmrgFullViewSearch) gmrgFullViewSearch.addEventListener('input', renderGmrgFullViewRows);
+    if (gmrgDeleteSelectedBtn) gmrgDeleteSelectedBtn.addEventListener('click', deleteSelectedGmrgGroups);
+    if (gmrgSelectAllCheckbox) {
+        gmrgSelectAllCheckbox.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            const checkboxes = tbodyGmrgFullView ? tbodyGmrgFullView.querySelectorAll('.gmrg-group-checkbox') : [];
+            checkboxes.forEach(cb => {
+                cb.checked = isChecked;
+                const k = cb.getAttribute('data-key');
+                if (k) {
+                    if (isChecked) selectedGmrgGroupKeys.add(k);
+                    else selectedGmrgGroupKeys.delete(k);
+                }
+            });
+            updateGmrgSelectAllState();
+        });
+    }
 
     // Merge Process & Download Execution
     async function runGroupMergeProcess() {
@@ -1619,6 +1708,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const renameFullViewCloseBtn = document.getElementById('renameFullViewCloseBtn');
     const fullViewSearchInput = document.getElementById('fullViewSearchInput');
     const fullViewTableBody = document.getElementById('fullViewTableBody');
+    const renameDeleteSelectedBtn = document.getElementById('renameDeleteSelectedBtn');
+    const renameSelectedCount = document.getElementById('renameSelectedCount');
+    const renameSelectAllCheckbox = document.getElementById('renameSelectAllCheckbox');
+    let selectedRenameIndices = new Set();
 
     const renameExcelPreviewModal = document.getElementById('renameExcelPreviewModal');
     const excelPreviewModalTitle = document.getElementById('excelPreviewModalTitle');
@@ -2101,13 +2194,91 @@ document.addEventListener('DOMContentLoaded', () => {
     // ----------------------------------------------------
     // FULL VIEW MODAL & ACTIONS (VIEW 50 ROWS, EDIT, DELETE)
     // ----------------------------------------------------
+    function updateRenameSelectAllState() {
+        if (!fullViewTableBody) return;
+        const checkboxes = fullViewTableBody.querySelectorAll('.rename-file-checkbox');
+        const count = selectedRenameIndices.size;
+        if (renameSelectedCount) renameSelectedCount.textContent = count;
+        if (renameDeleteSelectedBtn) {
+            renameDeleteSelectedBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        if (renameSelectAllCheckbox) {
+            if (checkboxes.length === 0) {
+                renameSelectAllCheckbox.checked = false;
+                renameSelectAllCheckbox.indeterminate = false;
+            } else {
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+                renameSelectAllCheckbox.checked = allChecked;
+                renameSelectAllCheckbox.indeterminate = !allChecked && someChecked;
+            }
+        }
+    }
+
+    async function deleteSelectedRenamedFiles() {
+        const count = selectedRenameIndices.size;
+        if (count === 0) return;
+
+        if (!confirm(`Are you sure you want to delete ${count} selected file(s) from this package?`)) {
+            return;
+        }
+
+        showLoader(`Deleting ${count} selected files...`);
+        try {
+            const sortedIndices = Array.from(selectedRenameIndices).sort((a, b) => b - a);
+
+            for (const idx of sortedIndices) {
+                const log = currentRenameLogs[idx];
+                if (log && log.renamed && currentRenameZipInstance) {
+                    currentRenameZipInstance.remove(log.renamed);
+                }
+                currentRenameLogs.splice(idx, 1);
+            }
+
+            if (currentRenameZipInstance) {
+                currentRenameZipBlob = await currentRenameZipInstance.generateAsync({ type: 'blob' });
+            }
+
+            selectedRenameIndices.clear();
+
+            const session = await getRenameSession();
+            if (session) {
+                session.log = currentRenameLogs;
+                session.blob = currentRenameZipBlob;
+                await saveRenameSession(session);
+            }
+
+            hideLoader();
+
+            if (currentRenameLogs.length === 0) {
+                renameResultCard.style.display = 'none';
+                renameFullViewModal.style.display = 'none';
+                await clearRenameSession();
+                showCustomAlert('Package Empty', 'All files have been removed from the package.', 'warning');
+                return;
+            }
+
+            renameSuccessMessage.textContent = `Renaming completed! Processed ${currentRenameLogs.length} file(s).`;
+            renderRenameLogTable(currentRenameLogs);
+            renderFullViewTable(fullViewSearchInput ? fullViewSearchInput.value : '');
+
+            showCustomAlert('Files Deleted', `${count} selected file(s) were removed from the package.`, 'success');
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error deleting selected files:', err);
+            alert('Failed to delete selected files: ' + err.message);
+        }
+    }
+
     function renderFullViewTable(filterText = '') {
         if (!fullViewTableBody) return;
         fullViewTableBody.innerHTML = '';
 
         if (!currentRenameLogs || currentRenameLogs.length === 0) {
-            fullViewTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 30px; color: #94a3b8;">No renamed files available.</td></tr>';
+            fullViewTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 30px; color: #94a3b8;">No renamed files available.</td></tr>';
             if (fullViewCountBadge) fullViewCountBadge.textContent = '0 Files';
+            updateRenameSelectAllState();
             return;
         }
 
@@ -2123,9 +2294,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             matchCount++;
+            const isChecked = selectedRenameIndices.has(index);
             const tr = document.createElement('tr');
 
             tr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="rename-file-checkbox" data-index="${index}" data-filename="${log.renamed}" ${isChecked ? 'checked' : ''} style="cursor: pointer; width: 16px; height: 16px;">
+                </td>
                 <td style="text-align: center; color: #64748b; font-weight: 600;">${index + 1}</td>
                 <td style="color: #475569;" title="${log.original}">${log.original}</td>
                 <td class="col-highlight" style="font-weight: 700; color: #1e293b;" title="${log.renamed}">${log.renamed}</td>
@@ -2144,6 +2319,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </td>
             `;
+
+            const chk = tr.querySelector('.rename-file-checkbox');
+            if (chk) {
+                chk.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedRenameIndices.add(index);
+                    } else {
+                        selectedRenameIndices.delete(index);
+                    }
+                    updateRenameSelectAllState();
+                });
+            }
 
             tr.querySelector('.btn-action-view').addEventListener('click', () => {
                 viewExcelFile50Rows(log.renamed);
@@ -2165,6 +2352,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `${currentRenameLogs.length} Files`
                 : `${matchCount} / ${currentRenameLogs.length} Files`;
         }
+
+        updateRenameSelectAllState();
     }
 
     // View first 50 rows of Excel/CSV file without lag
@@ -2476,8 +2665,29 @@ document.addEventListener('DOMContentLoaded', () => {
     // Event Listeners for Tab 2 Actions & Modals
     if (renameFullViewBtn) {
         renameFullViewBtn.addEventListener('click', () => {
+            selectedRenameIndices.clear();
             renderFullViewTable(fullViewSearchInput ? fullViewSearchInput.value : '');
             renameFullViewModal.style.display = 'flex';
+        });
+    }
+
+    if (renameDeleteSelectedBtn) {
+        renameDeleteSelectedBtn.addEventListener('click', deleteSelectedRenamedFiles);
+    }
+
+    if (renameSelectAllCheckbox) {
+        renameSelectAllCheckbox.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            const checkboxes = fullViewTableBody ? fullViewTableBody.querySelectorAll('.rename-file-checkbox') : [];
+            checkboxes.forEach(cb => {
+                cb.checked = isChecked;
+                const idx = parseInt(cb.getAttribute('data-index'), 10);
+                if (!isNaN(idx)) {
+                    if (isChecked) selectedRenameIndices.add(idx);
+                    else selectedRenameIndices.delete(idx);
+                }
+            });
+            updateRenameSelectAllState();
         });
     }
 
@@ -2575,6 +2785,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const splitFullViewCloseBtn = document.getElementById('splitFullViewCloseBtn');
     const splitFullViewSearchInput = document.getElementById('splitFullViewSearchInput');
     const splitFullViewTableBody = document.getElementById('splitFullViewTableBody');
+    const splitDeleteSelectedBtn = document.getElementById('splitDeleteSelectedBtn');
+    const splitSelectedCount = document.getElementById('splitSelectedCount');
+    const splitSelectAllCheckbox = document.getElementById('splitSelectAllCheckbox');
+    let selectedSplitIndices = new Set();
 
     // Persistence helpers for Split
     async function saveSplitSession(opt, sessionData) {
@@ -2886,6 +3100,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (fullViewBtn) {
             fullViewBtn.addEventListener('click', () => {
                 currentSplitOption = opt;
+                selectedSplitIndices.clear();
                 if (splitFullViewSearchInput) splitFullViewSearchInput.value = '';
                 renderSplitFullViewTable(opt, '');
                 if (splitFullViewModal) splitFullViewModal.style.display = 'flex';
@@ -3025,6 +3240,91 @@ document.addEventListener('DOMContentLoaded', () => {
     // ----------------------------------------------------
     // FULL VIEW MODAL & FILE ACTIONS FOR SPLIT
     // ----------------------------------------------------
+    function updateSplitSelectAllState() {
+        if (!splitFullViewTableBody) return;
+        const checkboxes = splitFullViewTableBody.querySelectorAll('.split-file-checkbox');
+        const count = selectedSplitIndices.size;
+        if (splitSelectedCount) splitSelectedCount.textContent = count;
+        if (splitDeleteSelectedBtn) {
+            splitDeleteSelectedBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+        }
+        if (splitSelectAllCheckbox) {
+            if (checkboxes.length === 0) {
+                splitSelectAllCheckbox.checked = false;
+                splitSelectAllCheckbox.indeterminate = false;
+            } else {
+                const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+                splitSelectAllCheckbox.checked = allChecked;
+                splitSelectAllCheckbox.indeterminate = !allChecked && someChecked;
+            }
+        }
+    }
+
+    async function deleteSelectedSplitFiles() {
+        const opt = currentSplitOption;
+        const session = splitSessions[opt];
+        if (!session) return;
+
+        const count = selectedSplitIndices.size;
+        if (count === 0) return;
+
+        if (!confirm(`Are you sure you want to delete ${count} selected file(s) from this split package?`)) {
+            return;
+        }
+
+        showLoader(`Deleting ${count} selected files...`);
+        try {
+            const sortedIndices = Array.from(selectedSplitIndices).sort((a, b) => b - a);
+
+            for (const idx of sortedIndices) {
+                const log = session.logs[idx];
+                if (log && log.filename && session.zipInstance) {
+                    session.zipInstance.remove(log.filename);
+                }
+                session.logs.splice(idx, 1);
+            }
+
+            if (session.zipInstance) {
+                session.blob = await session.zipInstance.generateAsync({ type: 'blob' });
+            }
+
+            selectedSplitIndices.clear();
+
+            await saveSplitSession(opt, {
+                timestamp: Date.now(),
+                expiresAt: session.expiresAt,
+                filename: session.filename,
+                log: session.logs,
+                fileMeta: session.fileMeta,
+                blob: session.blob
+            });
+
+            hideLoader();
+
+            const resultCard = document.getElementById(`splitResult${opt}`);
+            const successMsg = document.getElementById(`splitSuccessMsg${opt}`);
+
+            if (session.logs.length === 0) {
+                if (resultCard) resultCard.style.display = 'none';
+                if (splitFullViewModal) splitFullViewModal.style.display = 'none';
+                await clearSplitSession(opt);
+                showCustomAlert('Package Empty', 'All files have been removed from this package.', 'warning');
+                return;
+            }
+
+            if (successMsg) successMsg.textContent = `Generated ${session.logs.length} separate file(s)!`;
+            renderSplitFullViewTable(opt, splitFullViewSearchInput ? splitFullViewSearchInput.value : '');
+
+            showCustomAlert('Files Deleted', `${count} selected file(s) were removed from the package.`, 'success');
+
+        } catch (err) {
+            hideLoader();
+            console.error('Error deleting selected split files:', err);
+            alert('Failed to delete selected files: ' + err.message);
+        }
+    }
+
     function renderSplitFullViewTable(opt, filterText = '') {
         if (!splitFullViewTableBody) return;
         splitFullViewTableBody.innerHTML = '';
@@ -3042,8 +3342,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (!logs || logs.length === 0) {
-            splitFullViewTableBody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 30px; color: #94a3b8;">No split files available for Option ' + opt + '.</td></tr>';
+            splitFullViewTableBody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 30px; color: #94a3b8;">No split files available for Option ' + opt + '.</td></tr>';
             if (splitFullViewCountBadge) splitFullViewCountBadge.textContent = '0 Files';
+            updateSplitSelectAllState();
             return;
         }
 
@@ -3058,9 +3359,13 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             matchCount++;
+            const isChecked = selectedSplitIndices.has(index);
             const tr = document.createElement('tr');
 
             tr.innerHTML = `
+                <td style="text-align: center;">
+                    <input type="checkbox" class="split-file-checkbox" data-index="${index}" data-filename="${log.filename}" ${isChecked ? 'checked' : ''} style="cursor: pointer; width: 16px; height: 16px;">
+                </td>
                 <td style="text-align: center; color: #64748b; font-weight: 600;">${index + 1}</td>
                 <td class="col-highlight" style="font-weight: 700; color: #1e293b;" title="${log.filename}">${log.filename}</td>
                 <td style="color: #475569;" title="${log.key}">${log.key}</td>
@@ -3079,6 +3384,18 @@ document.addEventListener('DOMContentLoaded', () => {
                     </div>
                 </td>
             `;
+
+            const chk = tr.querySelector('.split-file-checkbox');
+            if (chk) {
+                chk.addEventListener('change', (e) => {
+                    if (e.target.checked) {
+                        selectedSplitIndices.add(index);
+                    } else {
+                        selectedSplitIndices.delete(index);
+                    }
+                    updateSplitSelectAllState();
+                });
+            }
 
             tr.querySelector('.btn-action-view').addEventListener('click', () => {
                 viewSplitExcelFile50Rows(log.filename);
@@ -3100,6 +3417,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? `${logs.length} Files`
                 : `${matchCount} / ${logs.length} Files`;
         }
+
+        updateSplitSelectAllState();
     }
 
     // View first 50 rows for split file
@@ -3299,6 +3618,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             session.logs.splice(index, 1);
+            selectedSplitIndices.clear();
 
             await saveSplitSession(opt, {
                 timestamp: Date.now(),
@@ -3463,6 +3783,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (splitFullViewMoveToFolderBtn) {
         splitFullViewMoveToFolderBtn.addEventListener('click', moveSplitFilesToCreateFolder);
+    }
+
+    if (splitDeleteSelectedBtn) {
+        splitDeleteSelectedBtn.addEventListener('click', deleteSelectedSplitFiles);
+    }
+
+    if (splitSelectAllCheckbox) {
+        splitSelectAllCheckbox.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            const checkboxes = splitFullViewTableBody ? splitFullViewTableBody.querySelectorAll('.split-file-checkbox') : [];
+            checkboxes.forEach(cb => {
+                cb.checked = isChecked;
+                const idx = parseInt(cb.getAttribute('data-index'), 10);
+                if (!isNaN(idx)) {
+                    if (isChecked) selectedSplitIndices.add(idx);
+                    else selectedSplitIndices.delete(idx);
+                }
+            });
+            updateSplitSelectAllState();
+        });
     }
 
     const modalSplitResetBtn = document.getElementById('modalSplitResetBtn');
